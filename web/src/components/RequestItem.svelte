@@ -1,7 +1,7 @@
 <script lang="ts">
   import X from '@lucide/svelte/icons/x';
   import { fly } from 'svelte/transition';
-  import { bytes, clock, shortAgo, statusClass } from '../lib/format';
+  import { bytes, clock, dateTime, shortAgo, statusClass } from '../lib/format';
   import { SIGNATURE_STATUS } from '../lib/signature';
   import { app } from '../lib/state.svelte';
   import type { Summary } from '../lib/types';
@@ -29,10 +29,11 @@
           </span>
         {/if}
         <span>{bytes(r.size)}</span>
+        <span class="at">{clock(r.created_at, app.prefs.utc)}</span>
         <span class="ip">{r.ip}</span>
       </span>
     </span>
-    <span class="when" title={clock(r.created_at)}>
+    <span class="when" title={dateTime(r.created_at, app.prefs.utc)}>
       {shortAgo(r.created_at, app.now)}
       {#if unread}<span class="dot" aria-label="unread"></span>{/if}
     </span>
@@ -110,6 +111,9 @@
   }
   .sig.warn {
     color: var(--warning);
+  }
+  .at {
+    font-variant-numeric: tabular-nums;
   }
   .ip {
     overflow: hidden;

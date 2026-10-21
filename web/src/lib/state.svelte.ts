@@ -10,6 +10,7 @@ export interface Prefs {
   pretty: boolean; // format JSON / XML bodies
   wrap: boolean; // wrap long lines in bodies
   notify: boolean; // desktop notification when the tab is hidden
+  utc: boolean; // times in UTC instead of the browser's time zone
   sidebarWidth: number;
   collapsed: Record<string, boolean>;
 }
@@ -20,6 +21,7 @@ const defaultPrefs: Prefs = {
   pretty: true,
   wrap: true,
   notify: false,
+  utc: false,
   sidebarWidth: 340,
   collapsed: {},
 };

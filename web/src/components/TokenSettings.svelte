@@ -124,7 +124,7 @@
     <form id="token-form" class="form" onsubmit={(e) => { e.preventDefault(); save(); }}>
       <div class="info">
         <span>Created {ago(app.token.created_at, app.now)}</span>
-        <span title={dateTime(app.token.expires_at)}>Expires after {duration(app.config.token_ttl)} without use</span>
+        <span title={dateTime(app.token.expires_at, app.prefs.utc)}>Expires after {duration(app.config.token_ttl)} without use</span>
         <span>{app.total} / {app.config.max_requests} requests kept</span>
       </div>
 

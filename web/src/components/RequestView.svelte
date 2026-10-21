@@ -73,7 +73,7 @@
           </span>
         {/if}
         <span class="chip">{bytes(head.size)}</span>
-        <span class="chip" title={dateTime(head.created_at)}>{ago(head.created_at, app.now)}</span>
+        <span class="chip" title={dateTime(head.created_at, app.prefs.utc)}>{ago(head.created_at, app.now)}</span>
         <span class="chip mono">{head.ip}</span>
         {#if result}
           <span class="chip" class:ok={result.ok} class:bad={!result.ok} title={result.error ?? result.url}>
@@ -165,7 +165,7 @@
             <dt>Host</dt>
             <dd class="mono">{req.hostname}</dd>
             <dt>Date</dt>
-            <dd>{dateTime(req.created_at)} <span class="muted">({ago(req.created_at, app.now)})</span></dd>
+            <dd>{dateTime(req.created_at, app.prefs.utc)} <span class="muted">({ago(req.created_at, app.now)})</span></dd>
             <dt>Size</dt>
             <dd>{bytes(req.size)}{#if req.truncated} <span class="chip warn">truncated</span>{/if}</dd>
             <dt>Protocol</dt>

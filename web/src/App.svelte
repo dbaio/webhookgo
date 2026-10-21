@@ -5,6 +5,7 @@
   import MousePointerClick from '@lucide/svelte/icons/mouse-pointer-click';
   import { onMount } from 'svelte';
   import { copyText } from './lib/clipboard';
+  import { timeZone } from './lib/format';
   import { app } from './lib/state.svelte';
   import EmptyState from './components/EmptyState.svelte';
   import ForwardDialog from './components/ForwardDialog.svelte';
@@ -76,6 +77,11 @@
         const current = app.prefs.theme === 'system' ? (dark ? 'dark' : 'light') : app.prefs.theme;
         app.prefs.theme = current === 'dark' ? 'light' : 'dark';
         app.savePrefs();
+      },
+      u: () => {
+        app.prefs.utc = !app.prefs.utc;
+        app.savePrefs();
+        app.toast(app.prefs.utc ? 'Times in UTC' : `Times in your time zone (${timeZone})`, 'info', 1800);
       },
       '?': () => (app.dialog = 'shortcuts'),
       Escape: () => app.mobile && app.select(null),

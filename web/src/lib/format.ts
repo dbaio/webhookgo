@@ -32,11 +32,19 @@ export function ago(iso: string, now: number): string {
   return rtf.format(Math.round(s / 86400), 'day');
 }
 
-const dtf = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'medium' });
-const tf = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+// Times show in the browser's time zone, or in UTC when `utc` is set.
+const formats = (timeZone?: string) => ({
+  // timeStyle long names the zone: "Oct 21, 2026, 6:05:50 PM GMT-3"
+  dateTime: new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'long', timeZone }),
+  clock: new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23', timeZone }),
+});
+const local = formats();
+const utcFormats = formats('UTC');
 
-export const dateTime = (iso: string) => dtf.format(new Date(iso));
-export const clock = (iso: string) => tf.format(new Date(iso));
+export const timeZone = local.dateTime.resolvedOptions().timeZone;
+export const dateTime = (iso: string, utc = false) => (utc ? utcFormats : local).dateTime.format(new Date(iso));
+/** "18:05:50", or "21:05:50 UTC" */
+export const clock = (iso: string, utc = false) => (utc ? `${utcFormats.clock.format(new Date(iso))} UTC` : local.clock.format(new Date(iso)));
 
 export function duration(seconds: number): string {
   if (seconds % 86400 === 0) return `${seconds / 86400} day${seconds === 86400 ? '' : 's'}`;

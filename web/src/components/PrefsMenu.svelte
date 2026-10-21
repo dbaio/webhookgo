@@ -9,6 +9,7 @@
   import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
   import Star from '@lucide/svelte/icons/star';
   import Sun from '@lucide/svelte/icons/sun';
+  import { timeZone } from '../lib/format';
   import { FORK_URL, ISSUES_URL, REPO_URL } from '../lib/project';
   import { app, type Prefs } from '../lib/state.svelte';
   import Dropdown from './Dropdown.svelte';
@@ -48,6 +49,10 @@
     <label class="menu-item">
       <span class="grow">Wrap long lines</span>
       <input type="checkbox" class="switch" checked={app.prefs.wrap} onchange={(e) => set('wrap', e.currentTarget.checked)} />
+    </label>
+    <label class="menu-item">
+      <span class="grow">Times in UTC<small>Instead of {timeZone}</small></span>
+      <input type="checkbox" class="switch" checked={app.prefs.utc} onchange={(e) => set('utc', e.currentTarget.checked)} />
     </label>
     <label class="menu-item">
       <span class="grow">Desktop notifications<small>When this tab is in the background</small></span>
