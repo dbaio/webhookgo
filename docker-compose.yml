@@ -7,10 +7,10 @@ services:
     build:
       context: .
       args:
-        VERSION: ${VERSION:-0.0.1}
+        VERSION: ${VERSION:-dev}
     # Built from source by default: `up -d` always rebuilds (cached, fast). To
     # run the published image instead, set IMAGE and PULL_POLICY (.env.example).
-    image: ${IMAGE:-webhookgo:${VERSION:-0.0.1}}
+    image: ${IMAGE:-webhookgo:${VERSION:-dev}}
     pull_policy: ${PULL_POLICY:-build}
     restart: unless-stopped
     ports:
