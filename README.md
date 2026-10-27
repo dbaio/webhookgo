@@ -37,6 +37,7 @@ Server-Sent Events. No PHP, no Node at runtime, no socket.io server.
 - [Features](#features)
 - [Configuration](#configuration)
 - [Hosting](#hosting): Cloudflare Tunnel, ngrok, Caddy, nginx
+- [Abuse handling](#abuse-handling)
 - [Signature verification](#signature-verification)
 - [API](#api)
 - [End-to-end tests](#end-to-end-tests)
@@ -86,6 +87,7 @@ every `docker compose up -d`. To stay on a release, use a version tag such as
 - **Search** across bodies, headers, query strings and IPs; filter by method.
 - **Wait for a webhook** from scripts and end-to-end tests: one API call returns as soon as a matching request arrives.
 - **Responsive UI** with light/dark themes, keyboard shortcuts (`?`), desktop notifications, unread markers and a history of your URLs.
+- **Abuse handling**: an `/abuse` page where anyone can look up and delete reported URLs, with records kept for investigations.
 - **Safe defaults**: per-IP rate limits, body and per-URL storage caps, custom responses sandboxed with CSP, strict CSP on the app, distroless non-root read-only container (~12 MB image).
 
 ## Configuration
@@ -107,6 +109,8 @@ overrides in a `.env` file next to `docker-compose.yml` (see [`.env.example`](.e
 | `RATE_LIMIT` | `600` | Captured requests per minute per client IP (`0` = unlimited). |
 | `TOKEN_RATE_LIMIT` | `30` | New URLs per minute per client IP (`0` = unlimited). |
 | `API_RATE_LIMIT` | `1200` | API calls (`/token/…`) per minute per client IP (`0` = unlimited). |
+| `AUDIT_RETENTION` | `180d` | How long the record of a URL is kept after it expires or is deleted (`0` = none). See [Abuse handling](#abuse-handling). |
+| `ABUSE_CONTACT` | none | Email or URL shown on the `/abuse` page. |
 | `TRUST_PROXY` | `false` | Honour `X-Forwarded-*` from your reverse proxies: `true` for one, or how many. The client IP is read from the right of `X-Forwarded-For`, so it can't be spoofed. Behind Cloudflare's proxy, see [Behind Cloudflare](#behind-cloudflares-proxy). |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection (`rediss://` for TLS). |
 | `LISTEN_ADDR` | `:8080` | Address the server listens on. |
@@ -265,6 +269,36 @@ A Cloudflare Tunnel needs none of this: there the app reads the client from
 - **Request size**: allow request bodies of at least `MAX_BODY_SIZE`.
 - **Timeouts**: use a read timeout longer than `MAX_DELAY`.
 
+## Abuse handling
+
+A public instance will be abused, like any webhook service: phishing kits post
+the credentials they collect to a URL, or a URL serves the phishing page
+itself. As on webhook.site, the people who report it can act on their own:
+`/abuse` (*Report abuse* in the app's menu) takes URLs, IDs or a whole report,
+shows when and from which IP each URL was created, how many requests it got and
+what it answers, and deletes it. A deleted URL answers `410 Gone` from then on.
+Set `ABUSE_CONTACT` to show where to report anything else.
+
+Each URL also gets a small record that outlives it by `AUDIT_RETENTION` (180
+days by default; `0` keeps none): when and from which IP and user agent it was
+created, how many requests it got and when the first and last arrived, and when
+and from where it was deleted. Captured requests are never part of it. To read
+records:
+
+```sh
+docker compose exec app webhookgo audit https://hooks.example.com/<uuid>
+docker compose exec -T app webhookgo audit < report.eml   # every ID in the text
+```
+
+Records live in Redis, next to the URLs:
+
+- They survive restarts and `docker compose down`: Redis runs with `appendonly yes` on the `redis-data` volume, and a crash loses about a second of writes at most. `docker compose down -v` deletes the volume, and everything with it.
+- Each takes a few hundred bytes of `REDIS_MAXMEMORY`. When Redis runs out, it evicts the least recently used keys, which can include old records. Give it room (watch `evicted_keys` in `redis-cli INFO stats`), and keep the output of `webhookgo audit` with each report you act on.
+- IP addresses are personal data under laws such as the GDPR and Brazil's LGPD: say in your terms what you keep and for how long.
+
+To block an abuser's IP address, use your firewall, or Cloudflare's IP Access
+Rules when it is in front.
+
 ## Signature verification
 
 A URL can check the signatures that providers put on their webhooks. Pick the
@@ -315,7 +349,7 @@ curl -s localhost:8080/token/$TOKEN/request/latest | jq -e '.signature.status ==
 
 Routes mirror webhook.site's open-source API. Differences: `query` and `form` are
 ordered `[{name, value}]` lists (repeated names are kept), header names are lower-case,
-and an unknown URL answers `404`.
+an unknown URL answers `404`, and a deleted one `410`.
 
 | Method | Path | |
 | --- | --- | --- |
@@ -418,7 +452,7 @@ and choose *Public*. You only need to do this once.
 ### Layout
 
 ```
-cmd/webhookgo/       entry point (also `webhookgo healthcheck` for Docker)
+cmd/webhookgo/       entry point (also `webhookgo healthcheck` and `webhookgo audit`)
 internal/config/    environment configuration
 internal/store/     Redis storage: atomic Lua scripts, hash-tagged keys, rate limiting
 internal/hub/       one Redis pub/sub subscription fanned out to SSE clients
@@ -437,7 +471,9 @@ TTL that is refreshed on every use: `wh:{id}:token` (settings), `wh:{id}:index`
 escaping or base64 overhead). Request IDs are UUIDv7, so they sort by arrival
 time. Storing a request, evicting the oldest beyond `MAX_REQUESTS` /
 `MAX_URL_STORAGE` and refreshing the TTL happen in one Lua script. Searches
-scan requests in small chunks, so memory stays bounded.
+scan requests in small chunks, so memory stays bounded. A sixth key,
+`wh:{id}:audit`, is the URL's record for [abuse handling](#abuse-handling): it
+expires `AUDIT_RETENTION` after the others.
 
 ## Contributing
 

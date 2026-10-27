@@ -49,7 +49,7 @@ func setup(t *testing.T, mutate ...func(*config.Config)) *env {
 	for _, m := range mutate {
 		m(&cfg)
 	}
-	st := store.New(rdb, cfg.TokenTTL, cfg.MaxRequests, cfg.MaxStorage)
+	st := store.New(rdb, cfg.TokenTTL, cfg.MaxRequests, cfg.MaxStorage, cfg.Retention)
 	h := hub.New(store.EventChannelPrefix)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

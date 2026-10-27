@@ -182,6 +182,8 @@ func (s *Server) appConfig(w http.ResponseWriter, r *http.Request) {
 		"max_body_size": s.cfg.MaxBodySize,
 		"max_delay":     s.cfg.MaxDelay,
 		"token_ttl":     int(s.cfg.TokenTTL.Seconds()),
+		"retention":     int(s.cfg.Retention.Seconds()),
+		"abuse_contact": s.cfg.AbuseContact,
 	})
 }
 

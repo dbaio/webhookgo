@@ -51,6 +51,9 @@ const POLL_HIDDEN_MS = 15_000;
 const POLL_PAGE = 20;
 const MOBILE = '(max-width: 899px)';
 
+/** The URL expired, never existed or was deleted. */
+const gone = (e: unknown) => e instanceof ApiError && (e.status === 404 || e.status === 410);
+
 class Store {
   config = $state<AppConfig>({
     app_name: 'webhookgo',
@@ -60,6 +63,8 @@ class Store {
     max_body_size: 2 << 20,
     max_delay: 30,
     token_ttl: 7 * 86400,
+    retention: 0,
+    abuse_contact: '',
   });
   prefs = $state<Prefs>({ ...defaultPrefs, ...read<Partial<Prefs>>('wh:prefs', {}) });
   history = $state<HistoryEntry[]>(read<HistoryEntry[]>('wh:history', []));
@@ -174,7 +179,7 @@ class Store {
       return true;
     } catch (e) {
       if (seq !== this.#openSeq) return false;
-      if (e instanceof ApiError && e.status === 404) {
+      if (gone(e)) {
         this.forget(id);
         if (quiet) return false;
         this.token = null;
@@ -484,7 +489,7 @@ class Store {
       await api.getToken(id);
       if (this.token?.uuid === id && !this.#es) this.#connect();
     } catch (e) {
-      if (e instanceof ApiError && e.status === 404) {
+      if (gone(e)) {
         this.status = 'missing';
         this.token = null;
       } else {
@@ -529,7 +534,7 @@ class Store {
       for (const r of fresh.reverse())
         this.#handle({ type: 'request.created', request: r, total: this.filtering ? this.total + 1 : res.total });
     } catch (e) {
-      if (e instanceof ApiError && e.status === 404) {
+      if (gone(e)) {
         this.#disconnect();
         this.status = 'missing';
         this.token = null;

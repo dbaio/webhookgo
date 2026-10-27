@@ -32,6 +32,23 @@ type Token struct {
 	UpdatedAt          time.Time         `json:"updated_at"`
 }
 
+// Record is what is kept about a URL for abuse investigations: it outlives
+// the URL by the retention period.
+type Record struct {
+	ID               string     `json:"uuid"`
+	Status           string     `json:"status"` // live, expired or deleted
+	CreatedAt        *time.Time `json:"created_at,omitempty"`
+	IP               string     `json:"ip,omitempty"` // of the creator
+	UserAgent        string     `json:"user_agent,omitempty"`
+	Requests         int64      `json:"requests"` // received while records were kept
+	FirstRequestAt   *time.Time `json:"first_request_at,omitempty"`
+	LastRequestAt    *time.Time `json:"last_request_at,omitempty"`
+	DeletedAt        *time.Time `json:"deleted_at,omitempty"`
+	DeletedIP        string     `json:"deleted_ip,omitempty"`
+	DeletedUserAgent string     `json:"deleted_user_agent,omitempty"`
+	KeptUntil        *time.Time `json:"kept_until,omitempty"` // when the record expires, unless the URL is used again
+}
+
 // KV is an ordered name/value pair (query strings and form fields keep their
 // original order and repeated names).
 type KV struct {

@@ -84,6 +84,10 @@ func (s *Server) loadToken(w http.ResponseWriter, r *http.Request) (*store.Token
 		return nil, false
 	}
 	t, err := s.store.GetToken(r.Context(), id)
+	if d, ok := errors.AsType[*store.DeletedError](err); ok {
+		writeJSON(w, http.StatusGone, map[string]any{"error": "URL deleted", "status": http.StatusGone, "deleted_at": d.At})
+		return nil, false
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "URL not found or expired")
 		return nil, false
@@ -376,7 +380,7 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	if err := s.store.SaveToken(r.Context(), t); err != nil {
+	if err := s.store.CreateToken(r.Context(), t); err != nil {
 		internalError(w, r, err)
 		return
 	}
@@ -450,7 +454,7 @@ func (s *Server) deleteToken(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.store.DeleteToken(r.Context(), t.ID); err != nil {
+	if err := s.store.DeleteToken(r.Context(), t, s.clientIP(r), r.UserAgent()); err != nil {
 		internalError(w, r, err)
 		return
 	}

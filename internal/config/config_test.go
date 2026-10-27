@@ -10,7 +10,7 @@ func TestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.ListenAddr != ":8080" || c.MaxRequests != 500 || c.TokenTTL != 7*24*time.Hour || c.MaxBodySize != 2<<20 || c.ProxyHops != 0 || c.MaxStorage != 64<<20 {
+	if c.ListenAddr != ":8080" || c.MaxRequests != 500 || c.TokenTTL != 7*24*time.Hour || c.MaxBodySize != 2<<20 || c.ProxyHops != 0 || c.MaxStorage != 64<<20 || c.Retention != 180*24*time.Hour {
 		t.Fatalf("unexpected defaults: %+v", c)
 	}
 }
@@ -21,11 +21,12 @@ func TestParsing(t *testing.T) {
 	t.Setenv("MAX_REQUESTS", "100")
 	t.Setenv("TRUST_PROXY", "true")
 	t.Setenv("PUBLIC_URL", "https://hooks.example.com/")
+	t.Setenv("AUDIT_RETENTION", "0")
 	c, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.TokenTTL != 30*24*time.Hour || c.MaxBodySize != 512<<10 || c.MaxRequests != 100 || c.ProxyHops != 1 {
+	if c.TokenTTL != 30*24*time.Hour || c.MaxBodySize != 512<<10 || c.MaxRequests != 100 || c.ProxyHops != 1 || c.Retention != 0 {
 		t.Fatalf("parsed: %+v", c)
 	}
 	if c.PublicURL != "https://hooks.example.com" {
@@ -57,11 +58,12 @@ func envSizeOf(t *testing.T, v string) (int64, error) {
 
 func TestInvalid(t *testing.T) {
 	for key, value := range map[string]string{
-		"MAX_REQUESTS":  "0",
-		"TOKEN_TTL":     "soon",
-		"MAX_BODY_SIZE": "big",
-		"TRUST_PROXY":   "perhaps",
-		"MAX_DELAY":     "-1",
+		"MAX_REQUESTS":    "0",
+		"TOKEN_TTL":       "soon",
+		"MAX_BODY_SIZE":   "big",
+		"TRUST_PROXY":     "perhaps",
+		"MAX_DELAY":       "-1",
+		"AUDIT_RETENTION": "-1h",
 	} {
 		t.Run(key, func(t *testing.T) {
 			t.Setenv(key, value)

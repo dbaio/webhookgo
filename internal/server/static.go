@@ -83,7 +83,7 @@ func compressible(ctype string) bool {
 
 func (sf *staticFiles) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
-	if p == "/" {
+	if p == "/" || p == "/abuse" { // pages of the single-page app
 		p = "/index.html"
 	}
 	a := sf.files[p]

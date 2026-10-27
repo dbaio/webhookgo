@@ -1,5 +1,8 @@
 import { mount } from 'svelte';
 import './app.css';
+import Abuse from './Abuse.svelte';
 import App from './App.svelte';
 
-export default mount(App, { target: document.getElementById('app')! });
+const page = location.pathname === '/abuse' ? Abuse : App;
+
+export default mount(page, { target: document.getElementById('app')! });

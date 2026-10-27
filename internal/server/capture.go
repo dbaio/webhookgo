@@ -45,6 +45,10 @@ func (s *Server) capture(w http.ResponseWriter, r *http.Request, tokenID, rest s
 	}
 
 	token, err := s.store.GetToken(ctx, tokenID)
+	if _, ok := errors.AsType[*store.DeletedError](err); ok {
+		writeError(w, http.StatusGone, "URL deleted")
+		return
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "URL not found or expired, create a new one")
 		return

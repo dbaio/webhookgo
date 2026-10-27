@@ -4,6 +4,7 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    public data?: unknown,
   ) {
     super(message);
   }
@@ -30,7 +31,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   }
   if (!res.ok) {
     const msg = (data as { error?: string } | null)?.error ?? `HTTP ${res.status}`;
-    throw new ApiError(res.status, msg);
+    throw new ApiError(res.status, msg, data);
   }
   return data as T;
 }
@@ -40,6 +41,7 @@ export interface ListParams {
   perPage?: number;
   q?: string;
   method?: string;
+  sorting?: 'newest' | 'oldest';
 }
 
 export const api = {
@@ -48,8 +50,8 @@ export const api = {
   getToken: (id: string) => call<Token>('GET', `/token/${id}`),
   updateToken: (id: string, input: TokenInput) => call<Token>('PUT', `/token/${id}`, input),
   deleteToken: (id: string) => call<void>('DELETE', `/token/${id}`),
-  listRequests: (id: string, { page = 1, perPage = 50, q = '', method = '' }: ListParams = {}) => {
-    const p = new URLSearchParams({ page: String(page), per_page: String(perPage), sorting: 'newest', summary: '1' });
+  listRequests: (id: string, { page = 1, perPage = 50, q = '', method = '', sorting = 'newest' }: ListParams = {}) => {
+    const p = new URLSearchParams({ page: String(page), per_page: String(perPage), sorting, summary: '1' });
     if (q) p.set('q', q);
     if (method) p.set('method', method);
     return call<Page<Summary>>('GET', `/token/${id}/requests?${p}`);

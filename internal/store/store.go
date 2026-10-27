@@ -12,6 +12,13 @@
 // Keeping bodies as raw bytes avoids JSON escaping blowing up their size, and
 // lets lists read only the summaries. Live updates are published on the
 // channel wh:events:{id}.
+//
+// Unless the retention is 0, a sixth key outlives the others, for abuse
+// investigations:
+//
+//	wh:{id}:audit  HASH    who created the URL, how many requests it got and
+//	                       who deleted it; it expires the retention period
+//	                       after the URL does
 package store
 
 import (
@@ -21,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,6 +36,13 @@ import (
 )
 
 var ErrNotFound = errors.New("not found")
+
+// DeletedError reports a URL that was deleted, as opposed to one that expired
+// or never existed. It matches ErrNotFound.
+type DeletedError struct{ At time.Time }
+
+func (e *DeletedError) Error() string        { return "deleted" }
+func (e *DeletedError) Is(target error) bool { return target == ErrNotFound }
 
 const EventChannelPrefix = "wh:events:"
 
@@ -39,20 +54,24 @@ func indexKey(id string) string { return "wh:{" + id + "}:index" }
 func sumKey(id string) string   { return "wh:{" + id + "}:sum" }
 func dataKey(id string) string  { return "wh:{" + id + "}:data" }
 func bodyKey(id string) string  { return "wh:{" + id + "}:body" }
+func auditKey(id string) string { return "wh:{" + id + "}:audit" }
 
 func EventChannel(id string) string { return EventChannelPrefix + id }
 
-// touchScript reads a token and pushes back the expiry of all its keys.
+// touchScript reads a token and pushes back the expiry of its five keys to
+// ARGV[1] seconds, and of its audit record (KEYS[6]) to ARGV[2] (0 = none).
 var touchScript = redis.NewScript(`
 local v = redis.call('GET', KEYS[1])
 if not v then return false end
-for i = 1, #KEYS do redis.call('EXPIRE', KEYS[i], ARGV[1]) end
+for i = 1, 5 do redis.call('EXPIRE', KEYS[i], ARGV[1]) end
+if tonumber(ARGV[2]) > 0 then redis.call('EXPIRE', KEYS[6], ARGV[2]) end
 return v
 `)
 
 // addScript stores a request, then evicts the oldest ones while the URL holds
 // more than ARGV[6] requests or more than ARGV[8] bytes (0 = no byte quota),
-// always keeping the newest. It refreshes the expiry and returns
+// always keeping the newest. It refreshes the expiry, counts the request in
+// the audit record (KEYS[6], kept ARGV[9] seconds; 0 = none) and returns
 // {total, evicted ids...}, or {-1} when the token no longer exists.
 var addScript = redis.NewScript(`
 if redis.call('EXISTS', KEYS[1]) == 0 then return {-1} end
@@ -83,8 +102,31 @@ while total > 1 and (total > max or (quota > 0 and used > quota)) do
   i = i + 1
 end
 result[1] = total
-for k = 1, #KEYS do redis.call('EXPIRE', KEYS[k], ARGV[7]) end
+for k = 1, 5 do redis.call('EXPIRE', KEYS[k], ARGV[7]) end
+local audit = tonumber(ARGV[9])
+if audit > 0 then
+  redis.call('HINCRBY', KEYS[6], 'requests', 1)
+  redis.call('HSETNX', KEYS[6], 'first_request_at', ARGV[2])
+  redis.call('HSET', KEYS[6], 'last_request_at', ARGV[2])
+  redis.call('EXPIRE', KEYS[6], audit)
+end
 return result
+`)
+
+// deleteScript removes a URL's five keys. When audit records are kept
+// (ARGV[1] seconds), it notes who created and who deleted the URL in KEYS[6]
+// and starts the retention period; otherwise it removes the record too.
+var deleteScript = redis.NewScript(`
+for k = 1, 5 do redis.call('DEL', KEYS[k]) end
+local ttl = tonumber(ARGV[1])
+if ttl <= 0 then
+  redis.call('DEL', KEYS[6])
+  return 0
+end
+redis.call('HSET', KEYS[6], 'created_at', ARGV[2], 'ip', ARGV[3], 'user_agent', ARGV[4],
+  'deleted_at', ARGV[5], 'deleted_ip', ARGV[6], 'deleted_user_agent', ARGV[7])
+redis.call('EXPIRE', KEYS[6], ttl)
+return 1
 `)
 
 type Store struct {
@@ -92,12 +134,14 @@ type Store struct {
 	ttl         time.Duration
 	maxRequests int
 	maxBytes    int64
+	retention   time.Duration
 }
 
 // New returns a store keeping at most maxRequests requests and maxBytes bytes
-// (0 = unlimited) per URL, for ttl after the URL was last used.
-func New(rdb redis.UniversalClient, ttl time.Duration, maxRequests int, maxBytes int64) *Store {
-	return &Store{rdb: rdb, ttl: ttl, maxRequests: maxRequests, maxBytes: maxBytes}
+// (0 = unlimited) per URL, for ttl after the URL was last used. Audit records
+// are kept for retention after the URL expires or is deleted (0 = none).
+func New(rdb redis.UniversalClient, ttl time.Duration, maxRequests int, maxBytes int64, retention time.Duration) *Store {
+	return &Store{rdb: rdb, ttl: ttl, maxRequests: maxRequests, maxBytes: maxBytes, retention: retention}
 }
 
 func (s *Store) TTL() time.Duration { return s.ttl }
@@ -107,6 +151,21 @@ func (s *Store) Ping(ctx context.Context) error { return s.rdb.Ping(ctx).Err() }
 func keys(id string) []string {
 	return []string{tokenKey(id), indexKey(id), sumKey(id), dataKey(id), bodyKey(id)}
 }
+
+// withAudit is keys(id) plus the audit record, for the scripts that keep it.
+func withAudit(id string) []string { return append(keys(id), auditKey(id)) }
+
+// auditTTL is how long, in seconds, an audit record outlives the URL's last
+// use while the URL exists; 0 when records are not kept.
+func (s *Store) auditTTL() int {
+	if s.retention <= 0 {
+		return 0
+	}
+	return int((s.ttl + s.retention).Seconds())
+}
+
+// maxAuditUserAgent caps the user agents kept in audit records.
+const maxAuditUserAgent = 512
 
 // marshal encodes without HTML escaping: <, > and & stay one byte.
 func marshal(v any) ([]byte, error) {
@@ -128,11 +187,30 @@ func (s *Store) SaveToken(ctx context.Context, t *Token) error {
 	return s.rdb.Set(ctx, tokenKey(t.ID), b, s.ttl).Err()
 }
 
-// GetToken loads a token and extends the life of the URL.
+// CreateToken saves a new token and starts its audit record.
+func (s *Store) CreateToken(ctx context.Context, t *Token) error {
+	b, err := marshal(t)
+	if err != nil {
+		return err
+	}
+	_, err = s.rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.Set(ctx, tokenKey(t.ID), b, s.ttl)
+		if ttl := s.auditTTL(); ttl > 0 {
+			p.HSet(ctx, auditKey(t.ID), "created_at", t.CreatedAt.UnixMilli(), "ip", t.IP,
+				"user_agent", clip(t.UserAgent, maxAuditUserAgent))
+			p.Expire(ctx, auditKey(t.ID), time.Duration(ttl)*time.Second)
+		}
+		return nil
+	})
+	return err
+}
+
+// GetToken loads a token and extends the life of the URL. A deleted URL
+// whose audit record is still kept gives a *DeletedError.
 func (s *Store) GetToken(ctx context.Context, id string) (*Token, error) {
-	v, err := touchScript.Run(ctx, s.rdb, keys(id), int(s.ttl.Seconds())).Text()
+	v, err := touchScript.Run(ctx, s.rdb, withAudit(id), int(s.ttl.Seconds()), s.auditTTL()).Text()
 	if errors.Is(err, redis.Nil) {
-		return nil, ErrNotFound
+		return nil, s.missing(ctx, id)
 	}
 	if err != nil {
 		return nil, err
@@ -144,8 +222,83 @@ func (s *Store) GetToken(ctx context.Context, id string) (*Token, error) {
 	return &t, nil
 }
 
-func (s *Store) DeleteToken(ctx context.Context, id string) error {
-	return s.rdb.Del(ctx, keys(id)...).Err()
+// missing tells a deleted URL from one that expired or never existed.
+func (s *Store) missing(ctx context.Context, id string) error {
+	ms, err := s.rdb.HGet(ctx, auditKey(id), "deleted_at").Int64()
+	if errors.Is(err, redis.Nil) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	return &DeletedError{At: time.UnixMilli(ms).UTC()}
+}
+
+// DeleteToken removes a URL and its requests. The audit record keeps who
+// created the URL and who (ip, userAgent) deleted it.
+func (s *Store) DeleteToken(ctx context.Context, t *Token, ip, userAgent string) error {
+	return deleteScript.Run(ctx, s.rdb, withAudit(t.ID), int(s.retention.Seconds()),
+		t.CreatedAt.UnixMilli(), t.IP, clip(t.UserAgent, maxAuditUserAgent),
+		time.Now().UnixMilli(), ip, clip(userAgent, maxAuditUserAgent),
+	).Err()
+}
+
+// GetRecord returns what is known about a URL for an abuse investigation,
+// without extending its life.
+func (s *Store) GetRecord(ctx context.Context, id string) (*Record, error) {
+	var (
+		fields *redis.MapStringStringCmd
+		keep   *redis.DurationCmd
+		token  *redis.StringCmd
+	)
+	_, err := s.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
+		fields = p.HGetAll(ctx, auditKey(id))
+		keep = p.PTTL(ctx, auditKey(id))
+		token = p.Get(ctx, tokenKey(id))
+		return nil
+	})
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	f := fields.Val()
+	at := func(k string) *time.Time {
+		ms, err := strconv.ParseInt(f[k], 10, 64)
+		if err != nil {
+			return nil
+		}
+		t := time.UnixMilli(ms).UTC()
+		return &t
+	}
+	r := &Record{
+		ID:               id,
+		Status:           "expired",
+		CreatedAt:        at("created_at"),
+		IP:               f["ip"],
+		UserAgent:        f["user_agent"],
+		FirstRequestAt:   at("first_request_at"),
+		LastRequestAt:    at("last_request_at"),
+		DeletedAt:        at("deleted_at"),
+		DeletedIP:        f["deleted_ip"],
+		DeletedUserAgent: f["deleted_user_agent"],
+	}
+	r.Requests, _ = strconv.ParseInt(f["requests"], 10, 64)
+	var t Token
+	switch {
+	case token.Err() == nil && json.Unmarshal([]byte(token.Val()), &t) == nil:
+		r.Status = "live"
+		if r.CreatedAt == nil { // created before audit records were kept
+			r.CreatedAt, r.IP, r.UserAgent = &t.CreatedAt, t.IP, clip(t.UserAgent, maxAuditUserAgent)
+		}
+	case len(f) == 0:
+		return nil, ErrNotFound
+	case r.DeletedAt != nil:
+		r.Status = "deleted"
+	}
+	if d := keep.Val(); d > 0 {
+		until := time.Now().Add(d).UTC().Truncate(time.Second)
+		r.KeptUntil = &until
+	}
+	return r, nil
 }
 
 func (s *Store) CountRequests(ctx context.Context, tokenID string) (int64, error) {
@@ -165,8 +318,8 @@ func (s *Store) AddRequest(ctx context.Context, r *Request, body []byte) (int64,
 	if err != nil {
 		return 0, nil, err
 	}
-	res, err := addScript.Run(ctx, s.rdb, keys(r.TokenID),
-		r.ID, r.CreatedAt.UnixMilli(), sum, m, body, s.maxRequests, int(s.ttl.Seconds()), s.maxBytes,
+	res, err := addScript.Run(ctx, s.rdb, withAudit(r.TokenID),
+		r.ID, r.CreatedAt.UnixMilli(), sum, m, body, s.maxRequests, int(s.ttl.Seconds()), s.maxBytes, s.auditTTL(),
 	).Slice()
 	if err != nil {
 		return 0, nil, err

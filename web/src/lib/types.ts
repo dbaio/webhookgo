@@ -6,6 +6,9 @@ export interface AppConfig {
   max_body_size: number;
   max_delay: number;
   token_ttl: number;
+  /** Seconds a URL's audit record outlives it; 0 = none kept. */
+  retention: number;
+  abuse_contact: string;
 }
 
 export interface KV {

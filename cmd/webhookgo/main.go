@@ -30,6 +30,8 @@ func main() {
 		switch os.Args[1] {
 		case "healthcheck": // used by the Docker HEALTHCHECK (no shell in the image)
 			os.Exit(healthcheck())
+		case "audit":
+			os.Exit(audit(os.Args[2:]))
 		case "version", "-v", "--version":
 			fmt.Println(version)
 			return
@@ -61,7 +63,7 @@ func run() error {
 		return err
 	}
 
-	st := store.New(rdb, cfg.TokenTTL, cfg.MaxRequests, cfg.MaxStorage)
+	st := store.New(rdb, cfg.TokenTTL, cfg.MaxRequests, cfg.MaxStorage, cfg.Retention)
 	h := hub.New(store.EventChannelPrefix)
 	hubCtx, stopHub := context.WithCancel(context.Background())
 	defer stopHub()

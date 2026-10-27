@@ -28,6 +28,8 @@ services:
       TOKEN_RATE_LIMIT: ${TOKEN_RATE_LIMIT:-30}
       API_RATE_LIMIT: ${API_RATE_LIMIT:-1200}
       TRUST_PROXY: ${TRUST_PROXY:-false}
+      AUDIT_RETENTION: ${AUDIT_RETENTION:-180d}
+      ABUSE_CONTACT: ${ABUSE_CONTACT:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
     depends_on:

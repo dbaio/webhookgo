@@ -24,6 +24,8 @@ type Config struct {
 	TokenLimit   int           // new URLs per minute per IP (0 disables)
 	APILimit     int           // API calls per minute per IP (0 disables)
 	ProxyHops    int           // trusted reverse proxies in front (0 = ignore X-Forwarded-*)
+	Retention    time.Duration // how long a URL's audit record outlives it (0 disables)
+	AbuseContact string        // email or URL shown on the abuse page
 	LogLevel     string
 	LogFormat    string
 	ShutdownWait time.Duration
@@ -35,6 +37,7 @@ func Load() (Config, error) {
 		RedisURL:     env("REDIS_URL", "redis://localhost:6379/0"),
 		PublicURL:    strings.TrimRight(env("PUBLIC_URL", ""), "/"),
 		AppName:      env("APP_NAME", "webhookgo"),
+		AbuseContact: env("ABUSE_CONTACT", ""),
 		LogLevel:     env("LOG_LEVEL", "info"),
 		LogFormat:    env("LOG_FORMAT", "text"),
 		ShutdownWait: 10 * time.Second,
@@ -59,6 +62,9 @@ func Load() (Config, error) {
 	if c.TokenTTL, err = envDuration("TOKEN_TTL", 7*24*time.Hour); err != nil {
 		return c, err
 	}
+	if c.Retention, err = envDuration("AUDIT_RETENTION", 180*24*time.Hour); err != nil {
+		return c, err
+	}
 	if c.MaxBodySize, err = envSize("MAX_BODY_SIZE", 2<<20); err != nil {
 		return c, err
 	}
@@ -80,6 +86,8 @@ func Load() (Config, error) {
 		return c, fmt.Errorf("MAX_DELAY must not be negative")
 	case c.MaxStorage < 0:
 		return c, fmt.Errorf("MAX_URL_STORAGE must not be negative")
+	case c.Retention < 0:
+		return c, fmt.Errorf("AUDIT_RETENTION must not be negative")
 	}
 	return c, nil
 }
