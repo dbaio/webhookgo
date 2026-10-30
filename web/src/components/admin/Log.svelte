@@ -19,6 +19,7 @@
     'user.delete': 'Delete a user',
     'url.view': "Open someone's private URL",
     'url.delete': 'Delete a URL',
+    'report.resolve': 'Close the abuse reports of a URL',
     setup: 'First admin created',
     'cli.invite': 'Invite from the CLI',
     'cli.reset': 'Reset link from the CLI',

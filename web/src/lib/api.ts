@@ -88,6 +88,10 @@ export const api = {
     call<void>('POST', '/api/account/password', { current_password: current, new_password: next }),
   logoutOthers: () => call<void>('POST', '/api/account/logout-others'),
 
+  // Abuse reports to the admins (accounts on)
+  reportAbuse: (ids: string[], message: string, contact: string) =>
+    call<{ status: string }>('POST', '/api/abuse/reports', { ids, message, contact }),
+
   // Private URLs (accounts on)
   listTokens: ({ page = 1, perPage = 20, q = '' }: Pick<ListParams, 'page' | 'perPage' | 'q'> = {}) => {
     const p = new URLSearchParams({ page: String(page), per_page: String(perPage) });

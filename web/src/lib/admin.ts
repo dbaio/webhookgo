@@ -6,6 +6,7 @@ import type { Page, Role, Token, User } from './types';
 export interface AdminStats {
   users: { total: number; admins: number; disabled: number };
   urls: { owned: number };
+  reports: { open: number };
   /** From Redis INFO. maxmemory 0 = no limit. */
   redis: { used_memory: number; maxmemory: number; evicted_keys: number };
   database: { size_bytes: number };
@@ -57,6 +58,34 @@ export interface UrlLookup {
   record: AuditRecord | null;
 }
 
+export type ReportStatus = 'open' | 'actioned' | 'dismissed';
+
+/** One abuse report of a URL, sent from the /abuse page. */
+export interface AbuseReport {
+  id: string;
+  reporter_ip: string;
+  contact: string;
+  message: string;
+  status: ReportStatus;
+  created_at: string;
+  /** Empty while open, or once the admin who handled it is deleted. */
+  handled_by_email: string;
+  handled_at: string | null;
+  note: string;
+}
+
+/** Every report of one URL, newest first, with what is known about the URL now. */
+export interface ReportGroup extends UrlLookup {
+  token_id: string;
+  reports: AbuseReport[];
+  open: number;
+  first_at: string;
+  last_at: string;
+}
+
+/** How the reports of a URL are closed: by deleting it, disabling its owner, or doing nothing. */
+export type ResolveAction = 'delete_url' | 'disable_owner' | 'dismiss';
+
 export interface LogEntry {
   id: string;
   actor_id: string | null;
@@ -80,6 +109,7 @@ export const LOG_ACTIONS = [
   'user.delete',
   'url.view',
   'url.delete',
+  'report.resolve',
   'setup',
   'cli.invite',
   'cli.reset',
@@ -148,6 +178,11 @@ export const adminApi = {
     call<Page<AdminUrl>>('GET', `/api/admin/urls${query({ q, owner, page, per_page: perPage })}`),
   lookupUrl: (id: string) => call<UrlLookup>('GET', `/api/admin/urls/${id}`),
   deleteUrl: (id: string) => call<void>('DELETE', `/api/admin/urls/${id}`),
+
+  listReports: ({ page = 1, perPage = 20, status = 'open' }: Omit<AdminListParams, 'q'> & { status?: ReportStatus | 'all' } = {}) =>
+    call<Page<ReportGroup>>('GET', `/api/admin/reports${query({ status, page, per_page: perPage })}`),
+  resolveReports: (tokenId: string, action: ResolveAction, note = '') =>
+    call<{ updated: number }>('POST', '/api/admin/reports/resolve', { token_id: tokenId, action, note }),
 
   log: ({ page = 1, perPage = 50, action = '', actor = '' }: Omit<AdminListParams, 'q'> & { action?: string; actor?: string } = {}) =>
     call<Page<LogEntry>>('GET', `/api/admin/log${query({ action, actor, page, per_page: perPage })}`),

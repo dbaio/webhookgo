@@ -107,7 +107,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/urls", s.admin(s.adminListURLs))
 	mux.HandleFunc("GET /api/admin/urls/{id}", s.admin(s.adminLookupURL))
 	mux.HandleFunc("DELETE /api/admin/urls/{id}", s.admin(s.adminDeleteURL))
+	mux.HandleFunc("GET /api/admin/reports", s.admin(s.adminListReports))
+	mux.HandleFunc("POST /api/admin/reports/resolve", s.admin(s.adminResolveReports))
 	mux.HandleFunc("GET /api/admin/log", s.admin(s.adminLog))
+	mux.HandleFunc("POST /api/abuse/reports", s.withAccounts(s.reportAbuse))
 	mux.Handle("GET /", s.ui)
 
 	// With accounts on, the API also refuses cross-origin writes and knows

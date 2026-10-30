@@ -82,6 +82,32 @@ func (tk *tokens) restore(ctx context.Context, t *store.Token) (*store.Token, er
 	return tk.store.GetToken(ctx, t.ID)
 }
 
+// exists reports whether a URL is live, in Redis or in Postgres, without
+// extending its life or filling the cache. A deleted URL does not exist.
+func (tk *tokens) exists(ctx context.Context, id string) (bool, error) {
+	_, err := tk.store.PeekToken(ctx, id)
+	if err == nil {
+		return true, nil
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return false, err
+	}
+	if tk.accounts == nil {
+		return false, nil
+	}
+	if unknown, err := tk.store.IsUnknown(ctx, id); err != nil || unknown {
+		return false, err
+	}
+	switch _, err := tk.accounts.URL(ctx, id); {
+	case errors.Is(err, accounts.ErrNotFound):
+		_ = tk.store.MarkUnknown(ctx, id) // best effort: it only saves work
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return true, nil
+}
+
 // create stores a new URL. An owned one goes to Postgres first, where the
 // owner's limit is checked (accounts.ErrTooManyURLs).
 func (tk *tokens) create(ctx context.Context, t *store.Token) error {

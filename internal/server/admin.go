@@ -1,10 +1,13 @@
 package server
 
 import (
+	"context"
 	"errors"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dbaio/webhookgo/internal/accounts"
 	"github.com/dbaio/webhookgo/internal/store"
@@ -98,6 +101,7 @@ func (s *Server) adminStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"users":    map[string]int{"total": st.Users, "admins": st.Admins, "disabled": st.Disabled},
 		"urls":     map[string]int{"owned": st.URLs},
+		"reports":  map[string]int{"open": st.OpenReports},
 		"redis":    rs,
 		"database": map[string]int64{"size_bytes": st.DatabaseBytes},
 		"version":  s.version,
@@ -305,6 +309,75 @@ func (s *Server) adminListURLs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, pageOf(items, len(items), total, page, perPage))
 }
 
+// urlLookup is what the panel knows about any UUID: a live URL and its
+// owner, the record of a gone one, both or neither.
+type urlLookup struct {
+	Token  *tokenView      `json:"token"`
+	Owner  *accounts.Owner `json:"owner"`
+	Record *store.Record   `json:"record"`
+}
+
+// findURL loads a URL, anonymous or owned, and its owner, without extending
+// its life. Both are nil when it does not exist.
+func (s *Server) findURL(ctx context.Context, id string) (*store.Token, *accounts.Owner, error) {
+	switch o, err := s.accounts.AdminURL(ctx, id); {
+	case err == nil:
+		return o.Token, &o.Owner, nil
+	case !errors.Is(err, accounts.ErrNotFound):
+		return nil, nil, err
+	}
+	t, err := s.store.PeekToken(ctx, id)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	if !t.Owned() {
+		return t, nil, nil
+	}
+	// A cached copy whose row is gone: name the owner if they still exist.
+	switch u, err := s.accounts.UserByID(ctx, t.OwnerID); {
+	case err == nil:
+		return t, &accounts.Owner{ID: u.ID, Email: u.Email}, nil
+	case !errors.Is(err, accounts.ErrNotFound):
+		return nil, nil, err
+	}
+	return t, nil, nil
+}
+
+// lookupURL is findURL together with the URL's audit record.
+func (s *Server) lookupURL(r *http.Request, id string) (urlLookup, error) {
+	ctx := r.Context()
+	t, owner, err := s.findURL(ctx, id)
+	if err != nil {
+		return urlLookup{}, err
+	}
+	rec, err := s.store.GetRecord(ctx, id)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return urlLookup{}, err
+	}
+	l := urlLookup{Owner: owner, Record: rec}
+	if t != nil {
+		n, err := s.store.CountRequests(ctx, t.ID)
+		if err != nil {
+			return urlLookup{}, err
+		}
+		l.Token = s.view(r, t, n)
+		if rec != nil && rec.Status == "expired" { // an owned URL missing from the cache is still live
+			rec.Status = "live"
+		}
+		if !t.Owned() { // the view takes this read for a use, which a lookup is not
+			at, err := s.store.ExpiresAt(ctx, t.ID)
+			if err != nil {
+				return urlLookup{}, err
+			}
+			l.Token.ExpiresAt = &at
+		}
+	}
+	return l, nil
+}
+
 // adminLookupURL is GET /api/admin/urls/{id}: what is known about any UUID,
 // anonymous, owned, deleted or never seen, without extending its life.
 func (s *Server) adminLookupURL(w http.ResponseWriter, r *http.Request) {
@@ -312,77 +385,18 @@ func (s *Server) adminLookupURL(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ctx := r.Context()
-	var (
-		t     *store.Token
-		owner *accounts.Owner
-	)
-	switch o, err := s.accounts.AdminURL(ctx, id); {
-	case err == nil:
-		t, owner = o.Token, &o.Owner
-	case !errors.Is(err, accounts.ErrNotFound):
-		internalError(w, r, err)
-		return
-	default:
-		if t, err = s.store.PeekToken(ctx, id); err != nil && !errors.Is(err, store.ErrNotFound) {
-			internalError(w, r, err)
-			return
-		}
-		if t != nil && t.Owned() { // a cached copy whose row is gone: name the owner if they still exist
-			switch u, err := s.accounts.UserByID(ctx, t.OwnerID); {
-			case err == nil:
-				owner = &accounts.Owner{ID: u.ID, Email: u.Email}
-			case !errors.Is(err, accounts.ErrNotFound):
-				internalError(w, r, err)
-				return
-			}
-		}
-	}
-	rec, err := s.store.GetRecord(ctx, id)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		internalError(w, r, err)
-		return
-	}
-	var v *tokenView
-	if t != nil {
-		n, err := s.store.CountRequests(ctx, t.ID)
-		if err != nil {
-			internalError(w, r, err)
-			return
-		}
-		v = s.view(r, t, n)
-		if rec != nil && rec.Status == "expired" { // an owned URL missing from the cache is still live
-			rec.Status = "live"
-		}
-		if !t.Owned() { // the view takes this read for a use, which a lookup is not
-			at, err := s.store.ExpiresAt(ctx, t.ID)
-			if err != nil {
-				internalError(w, r, err)
-				return
-			}
-			v.ExpiresAt = &at
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"token": v, "owner": owner, "record": rec})
-}
-
-// adminDeleteURL is DELETE /api/admin/urls/{id}: an anonymous or owned URL
-// goes through the token layer like any other delete, and is logged.
-func (s *Server) adminDeleteURL(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r, "URL not found")
-	if !ok {
-		return
-	}
-	ctx := r.Context()
-	t, err := s.tokens.read(ctx, id)
-	if errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "URL not found or expired")
-		return
-	}
+	l, err := s.lookupURL(r, id)
 	if err != nil {
 		internalError(w, r, err)
 		return
 	}
+	writeJSON(w, http.StatusOK, l)
+}
+
+// deleteURL removes a URL on the admin's behalf, through the token layer
+// like any other delete, and logs it. It returns what the log row holds.
+func (s *Server) deleteURL(r *http.Request, t *store.Token) (map[string]any, error) {
+	ctx := r.Context()
 	details := map[string]any{"description": t.Description}
 	if t.Owned() {
 		details["owner_id"] = t.OwnerID
@@ -390,20 +404,151 @@ func (s *Server) adminDeleteURL(w http.ResponseWriter, r *http.Request) {
 		case err == nil:
 			details["owner_email"] = u.Email
 		case !errors.Is(err, accounts.ErrNotFound):
-			internalError(w, r, err)
-			return
+			return nil, err
 		}
 	}
 	if err := s.tokens.delete(ctx, t, s.clientIP(r), r.UserAgent()); err != nil {
-		internalError(w, r, err)
-		return
+		return nil, err
 	}
 	s.publish(ctx, t.ID, event{Type: "token.deleted"})
-	if err := s.logAdmin(r, accounts.ActionURLDelete, accounts.TargetURL, t.ID, details); err != nil {
+	return details, s.logAdmin(r, accounts.ActionURLDelete, accounts.TargetURL, t.ID, details)
+}
+
+// adminDeleteURL is DELETE /api/admin/urls/{id}: an anonymous or owned URL.
+func (s *Server) adminDeleteURL(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "URL not found")
+	if !ok {
+		return
+	}
+	t, err := s.tokens.read(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "URL not found or expired")
+		return
+	}
+	if err == nil {
+		_, err = s.deleteURL(r, t)
+	}
+	if err != nil {
 		internalError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Reports ----------------------------------------------------------------
+
+// reportGroup is the reports of one URL together with what the panel knows
+// about the URL now.
+type reportGroup struct {
+	*accounts.ReportGroup
+	urlLookup
+}
+
+// adminListReports is GET /api/admin/reports: the URLs reported from the
+// /abuse page, grouped by URL, the one with the newest matching report
+// first, with ?status (open, the default; actioned; dismissed; all), ?page
+// and ?per_page.
+func (s *Server) adminListReports(w http.ResponseWriter, r *http.Request) {
+	page, perPage := paging(r)
+	status := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
+	switch status {
+	case "":
+		status = accounts.ReportOpen
+	case "all":
+		status = ""
+	case accounts.ReportOpen, accounts.ReportActioned, accounts.ReportDismissed:
+	default:
+		writeError(w, http.StatusUnprocessableEntity, "status must be open, actioned, dismissed or all")
+		return
+	}
+	groups, total, err := s.accounts.ListReports(r.Context(), status, page, perPage)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	items := make([]reportGroup, len(groups))
+	for i, g := range groups {
+		l, err := s.lookupURL(r, g.TokenID)
+		if err != nil {
+			internalError(w, r, err)
+			return
+		}
+		items[i] = reportGroup{ReportGroup: g, urlLookup: l}
+	}
+	writeJSON(w, http.StatusOK, pageOf(items, len(items), total, page, perPage))
+}
+
+// adminResolveReports is POST /api/admin/reports/resolve: the admin acts on
+// a reported URL (deletes it, disables its owner, or dismisses the reports)
+// and every open report of it is closed, with a note.
+func (s *Server) adminResolveReports(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		TokenID string `json:"token_id"`
+		Action  string `json:"action"`
+		Note    string `json:"note"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	id, action, note := strings.ToLower(strings.TrimSpace(in.TokenID)), strings.ToLower(strings.TrimSpace(in.Action)), strings.TrimSpace(in.Note)
+	switch {
+	case !isUUID(id):
+		writeError(w, http.StatusUnprocessableEntity, "token_id must be a URL ID")
+		return
+	case action != accounts.ResolveDeleteURL && action != accounts.ResolveDisableOwner && action != accounts.ResolveDismiss:
+		writeError(w, http.StatusUnprocessableEntity, "action must be delete_url, disable_owner or dismiss")
+		return
+	case utf8.RuneCountInString(note) > maxReportMessage:
+		writeError(w, http.StatusUnprocessableEntity, "note must be at most 2000 characters")
+		return
+	}
+	ctx := r.Context()
+	if reported, err := s.accounts.Reported(ctx, id); err != nil {
+		internalError(w, r, err)
+		return
+	} else if !reported {
+		writeError(w, http.StatusNotFound, "No reports for this URL")
+		return
+	}
+	details := map[string]any{}
+	switch action {
+	case accounts.ResolveDeleteURL:
+		t, err := s.tokens.read(ctx, id)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			internalError(w, r, err)
+			return
+		}
+		details["deleted"] = err == nil // false: it was already gone
+		if t != nil {
+			d, err := s.deleteURL(r, t)
+			if err != nil {
+				internalError(w, r, err)
+				return
+			}
+			maps.Copy(details, d)
+		}
+	case accounts.ResolveDisableOwner:
+		_, owner, err := s.findURL(ctx, id)
+		if err != nil {
+			internalError(w, r, err)
+			return
+		}
+		if owner == nil {
+			writeError(w, http.StatusConflict, "This URL has no owner")
+			return
+		}
+		disabled := true
+		if _, err := s.accounts.UpdateUser(ctx, userFrom(r), owner.ID, accounts.UserUpdate{Disabled: &disabled}, s.clientIP(r)); s.userError(w, r, err) {
+			return
+		}
+		details["owner_id"], details["owner_email"] = owner.ID, owner.Email
+	}
+	n, err := s.accounts.ResolveReports(ctx, userFrom(r), accounts.Resolution{TokenID: id, Action: action, Note: note, Details: details, IP: s.clientIP(r)})
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"updated": n})
 }
 
 // --- Log --------------------------------------------------------------------

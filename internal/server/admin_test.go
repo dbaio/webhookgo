@@ -26,6 +26,8 @@ var adminRoutes = []struct{ method, path, body string }{
 	{"GET", "/api/admin/urls", ""},
 	{"GET", "/api/admin/urls/" + zeroUUID, ""},
 	{"DELETE", "/api/admin/urls/" + zeroUUID, ""},
+	{"GET", "/api/admin/reports", ""},
+	{"POST", "/api/admin/reports/resolve", `{"token_id":"` + zeroUUID + `","action":"dismiss"}`},
 	{"GET", "/api/admin/log", ""},
 }
 

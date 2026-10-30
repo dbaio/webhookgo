@@ -828,23 +828,29 @@ func (s *Store) Subscribe(ctx context.Context) *redis.PubSub {
 // Allow implements a fixed one-minute window rate limiter. It returns whether
 // the hit is allowed and, if not, how long until the window resets.
 func (s *Store) Allow(ctx context.Context, bucket, key string, limit int) (bool, time.Duration, error) {
+	return s.AllowPer(ctx, bucket, key, limit, time.Minute)
+}
+
+// AllowPer is Allow with a fixed window of any length (whole seconds).
+func (s *Store) AllowPer(ctx context.Context, bucket, key string, limit int, window time.Duration) (bool, time.Duration, error) {
 	if limit <= 0 {
 		return true, 0, nil
 	}
 	now := time.Now()
-	window := now.Unix() / 60
-	k := fmt.Sprintf("wh:rl:%s:%s:%d", bucket, key, window)
+	secs := max(int64(window.Seconds()), 1)
+	n := now.Unix() / secs
+	k := fmt.Sprintf("wh:rl:%s:%s:%d", bucket, key, n)
 	var incr *redis.IntCmd
 	_, err := s.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
 		incr = p.Incr(ctx, k)
-		p.Expire(ctx, k, 61*time.Second)
+		p.Expire(ctx, k, time.Duration(secs+1)*time.Second)
 		return nil
 	})
 	if err != nil {
 		return false, 0, err
 	}
 	if incr.Val() > int64(limit) {
-		reset := time.Unix((window+1)*60, 0).Sub(now)
+		reset := time.Unix((n+1)*secs, 0).Sub(now)
 		return false, reset, nil
 	}
 	return true, 0, nil

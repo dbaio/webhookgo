@@ -36,17 +36,18 @@ const (
 
 // Logged actions.
 const (
-	ActionSetup       = "setup" // the first admin was created
-	ActionUserInvite  = "user.invite"
-	ActionUserRole    = "user.role"
-	ActionUserDisable = "user.disable"
-	ActionUserEnable  = "user.enable"
-	ActionUserReset   = "user.reset_link"
-	ActionUserDelete  = "user.delete"
-	ActionURLDelete   = "url.delete"
-	ActionURLView     = "url.view" // an admin opened someone else's private URL
-	ActionCLIInvite   = "cli.invite"
-	ActionCLIReset    = "cli.reset"
+	ActionSetup         = "setup" // the first admin was created
+	ActionUserInvite    = "user.invite"
+	ActionUserRole      = "user.role"
+	ActionUserDisable   = "user.disable"
+	ActionUserEnable    = "user.enable"
+	ActionUserReset     = "user.reset_link"
+	ActionUserDelete    = "user.delete"
+	ActionURLDelete     = "url.delete"
+	ActionURLView       = "url.view" // an admin opened someone else's private URL
+	ActionCLIInvite     = "cli.invite"
+	ActionCLIReset      = "cli.reset"
+	ActionReportResolve = "report.resolve" // the abuse reports of a URL were closed
 )
 
 // --- Log --------------------------------------------------------------------
@@ -417,13 +418,14 @@ func (s *Store) ListAllURLs(ctx context.Context, search, ownerID string, page, p
 type Stats struct {
 	Users, Admins, Disabled int   // accounts, active admins among them, disabled accounts
 	URLs                    int   // URLs that belong to accounts
+	OpenReports             int   // abuse reports nobody has handled yet
 	DatabaseBytes           int64 // pg_database_size(current_database())
 }
 
 func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	var st Stats
 	err := s.pool.QueryRow(ctx, `select count(*), count(*) filter (where role = $1 and disabled_at is null), count(*) filter (where disabled_at is not null),
-		(select count(*) from urls), pg_database_size(current_database()) from users`, RoleAdmin).
-		Scan(&st.Users, &st.Admins, &st.Disabled, &st.URLs, &st.DatabaseBytes)
+		(select count(*) from urls), (select count(*) from abuse_reports where status = $2), pg_database_size(current_database()) from users`, RoleAdmin, ReportOpen).
+		Scan(&st.Users, &st.Admins, &st.Disabled, &st.URLs, &st.OpenReports, &st.DatabaseBytes)
 	return st, err
 }

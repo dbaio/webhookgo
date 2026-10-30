@@ -1,5 +1,6 @@
 <script lang="ts">
   import Database from '@lucide/svelte/icons/database';
+  import Flag from '@lucide/svelte/icons/flag';
   import LoaderCircle from '@lucide/svelte/icons/loader-circle';
   import Lock from '@lucide/svelte/icons/lock';
   import MemoryStick from '@lucide/svelte/icons/memory-stick';
@@ -15,6 +16,9 @@
   import { app } from '../../lib/state.svelte';
   import FormError from '../FormError.svelte';
 
+  /** Called with each load, so the panel's open-report count follows. */
+  let { onstats }: { onstats?: (s: AdminStats) => void } = $props();
+
   let stats = $state.raw<AdminStats | null>(null);
   let loading = $state(false);
   let error = $state('');
@@ -26,6 +30,7 @@
     try {
       stats = await adminApi.stats();
       updated = new Date().toISOString();
+      onstats?.(stats);
     } catch (e) {
       error = `Could not load the numbers: ${(e as Error).message}`;
     } finally {
@@ -56,7 +61,7 @@
 
   {#if stats}
     {@const s = stats}
-    <div class="tiles">
+    <div class="tiles five">
       <a class="card tile link" href="#users">
         <span class="icon"><Users /></span>
         <span class="value">{count.format(s.users.total)}</span>
@@ -76,6 +81,11 @@
         <span class="icon"><Lock /></span>
         <span class="value">{count.format(s.urls.owned)}</span>
         <span class="label">Private URLs</span>
+      </a>
+      <a class="card tile link" href="#reports">
+        <span class="icon" class:warn={s.reports.open > 0}><Flag /></span>
+        <span class="value">{count.format(s.reports.open)}</span>
+        <span class="label">Open reports</span>
       </a>
     </div>
 
@@ -138,6 +148,9 @@
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 12px;
+  }
+  .tiles.five {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
   .tile {
     display: grid;
@@ -260,7 +273,8 @@
     color: var(--text-3);
   }
   @media (max-width: 860px) {
-    .tiles {
+    .tiles,
+    .tiles.five {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
   }

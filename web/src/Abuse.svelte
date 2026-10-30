@@ -1,8 +1,12 @@
 <script lang="ts">
+  import CircleCheck from '@lucide/svelte/icons/circle-check';
   import Eraser from '@lucide/svelte/icons/eraser';
   import ExternalLink from '@lucide/svelte/icons/external-link';
+  import Flag from '@lucide/svelte/icons/flag';
   import LoaderCircle from '@lucide/svelte/icons/loader-circle';
+  import Lock from '@lucide/svelte/icons/lock';
   import Search from '@lucide/svelte/icons/search';
+  import Send from '@lucide/svelte/icons/send';
   import ShieldAlert from '@lucide/svelte/icons/shield-alert';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import Webhook from '@lucide/svelte/icons/webhook';
@@ -11,11 +15,13 @@
   import { ago, bytes, dateTime, duration } from './lib/format';
   import { app } from './lib/state.svelte';
   import type { Token } from './lib/types';
+  import FormError from './components/FormError.svelte';
   import Toasts from './components/Toasts.svelte';
 
   interface Row {
     id: string;
-    state: 'waiting' | 'loading' | 'live' | 'deleted' | 'missing' | 'error';
+    /** `private`: it belongs to an account, so only the admins can act on it (accounts on). */
+    state: 'waiting' | 'loading' | 'live' | 'private' | 'deleted' | 'missing' | 'error';
     token?: Token;
     first?: string; // oldest stored request
     last?: string; // newest stored request
@@ -69,6 +75,8 @@
         row.deletedAt = (e.data as { deleted_at?: string } | undefined)?.deleted_at;
       } else if (e instanceof ApiError && e.status === 404) {
         row.state = 'missing';
+      } else if (e instanceof ApiError && e.status === 403) {
+        row.state = 'private';
       } else {
         row.state = 'error';
         row.error = (e as Error).message;
@@ -78,6 +86,8 @@
 
   async function lookupAll() {
     const seq = ++run;
+    sent = false;
+    retry = '';
     rows = ids.map((id) => ({ id, state: 'waiting' }));
     let next = 0;
     const worker = async () => {
@@ -120,6 +130,48 @@
     }
   }
 
+  // --- Report to the administrators (accounts on) ----------------------------------
+  // Private URLs can only be acted on by the admins; live anonymous ones can
+  // be reported too, by anyone who would rather not delete them alone.
+  let message = $state('');
+  let email = $state('');
+  let sending = $state(false);
+  let sent = $state(false);
+  let retry = $state('');
+  let reported = $state(new Set<string>());
+
+  const reportable = $derived(rows.filter((r) => r.state === 'private' || r.state === 'live').map((r) => r.id));
+  const pending = $derived(reportable.filter((id) => !reported.has(id)));
+  const urls = (n: number) => `${n} URL${n === 1 ? '' : 's'}`;
+
+  function focusReport() {
+    const el = document.getElementById('report-message');
+    el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    el?.focus({ preventScroll: true });
+  }
+
+  async function sendReport() {
+    if (sending || !pending.length) return;
+    const ids = pending;
+    sending = true;
+    sent = false;
+    retry = '';
+    try {
+      await api.reportAbuse(ids, message.trim(), email.trim());
+      reported = new Set([...reported, ...ids]);
+      sent = true;
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 429) {
+        const secs = Number(/(\d+)s$/.exec(e.message)?.[1] ?? 0);
+        retry = `Too many reports from your address. Try again in ${secs >= 120 ? `${Math.ceil(secs / 60)} minutes` : secs ? `${secs} seconds` : 'a while'}.`;
+      } else {
+        retry = `Could not send the report: ${(e as Error).message}`;
+      }
+    } finally {
+      sending = false;
+    }
+  }
+
   const servesHtml = (t: Token) => /html|xml|svg/i.test(t.default_content_type) && t.default_content.trim() !== '';
 
   const short = new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'short' });
@@ -152,6 +204,9 @@
       <p>
         Anyone who has a URL can delete it. It stops answering at once (<code>410 Gone</code>), and the requests it
         captured, which may hold victims' data, are erased.
+        {#if app.config.accounts}
+          URLs that belong to accounts are private: report them below and an administrator will review them.
+        {/if}
       </p>
       {#if app.config.retention > 0}
         <p>
@@ -226,6 +281,12 @@
                         <Trash2 /> {row.confirm ? 'Click again to delete' : 'Delete'}
                       </button>
                     </div>
+                  {:else if row.state === 'private'}
+                    <div class="row-actions">
+                      <button type="button" class="btn xs" title="Report it to the administrators, below" onclick={focusReport}>
+                        <Flag /> Report
+                      </button>
+                    </div>
                   {/if}
                 </td>
                 {#if row.state === 'live' && row.token}
@@ -248,6 +309,11 @@
                       {#if servesHtml(t)}<span class="chip warn flag">serves a page</span>{/if}
                     </small>
                   </td>
+                {:else if row.state === 'private'}
+                  <td><span class="chip"><Lock /> Private</span></td>
+                  <td colspan="4" class="muted">
+                    Private URL. It belongs to an account on this server, so only its administrators can act on it.
+                  </td>
                 {:else if row.state === 'deleted'}
                   <td><span class="chip bad">Deleted</span></td>
                   <td colspan="4">
@@ -268,6 +334,41 @@
             {/each}
           </tbody>
         </table>
+      </section>
+    {/if}
+
+    {#if app.config.accounts && reportable.length}
+      <section id="abuse-report" class="card form report" aria-labelledby="report-title">
+        <h2 id="report-title"><Flag size={16} /> Report to the administrators</h2>
+        <p class="hint">
+          This sends the {urls(reportable.length)} above that are active or private. The administrators see your IP
+          address with the report.
+        </p>
+        <label class="label" for="report-message">What is wrong with these URLs?</label>
+        <textarea
+          id="report-message"
+          class="input text"
+          rows="4"
+          maxlength="2000"
+          placeholder="Optional, but it helps: what do they serve or collect, and where did you find them?"
+          bind:value={message}
+        ></textarea>
+        <label class="label" for="report-contact">Your email, if you want an answer</label>
+        <input id="report-contact" class="input" type="email" maxlength="254" autocomplete="email" spellcheck="false" bind:value={email} />
+        {#if sent}
+          <p class="thanks" role="status">
+            <CircleCheck size={16} />
+            <span>Thank you. The administrators will review {reported.size === 1 ? 'this URL' : 'these URLs'}{email.trim() ? ' and may write to you' : ''}.</span>
+          </p>
+        {/if}
+        <FormError message={retry} />
+        <div class="actions">
+          <span class="hint grow">{pending.length ? 'Reporting a URL does not delete it.' : 'Every URL above has been reported.'}</span>
+          <button type="button" class="btn primary sm" disabled={sending || !pending.length} onclick={sendReport}>
+            {#if sending}<LoaderCircle class="spin" />{:else}<Send />{/if}
+            {pending.length || !reported.size ? `Report ${urls(pending.length)}` : 'Reported'}
+          </button>
+        </div>
       </section>
     {/if}
   </main>
@@ -416,5 +517,37 @@
     height: 18px;
     margin-left: 4px;
     font-size: 11px;
+  }
+  .report h2 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+    letter-spacing: -0.01em;
+  }
+  .report h2 :global(svg) {
+    color: var(--warning);
+  }
+  .report .label {
+    margin-top: 4px;
+  }
+  .report .text {
+    min-height: 84px;
+    font-family: inherit;
+    font-size: 13px;
+  }
+  .thanks {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 9px 12px;
+    border-radius: var(--radius-sm);
+    background: var(--success-soft);
+    color: var(--success);
+    font-size: 13px;
+  }
+  .thanks :global(svg) {
+    flex: none;
+    margin-top: 1px;
   }
 </style>

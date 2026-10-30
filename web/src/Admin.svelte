@@ -1,7 +1,8 @@
 <script lang="ts">
-  // The admin panel (/admin): numbers, users, URLs and the log, one tab each,
-  // with the tab in the address (#users, #urls/<id>…).
+  // The admin panel (/admin): numbers, users, URLs, abuse reports and the
+  // log, one tab each, with the tab in the address (#users, #urls/<id>…).
   import type { LucideIcon } from '@lucide/svelte';
+  import Flag from '@lucide/svelte/icons/flag';
   import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
   import Link from '@lucide/svelte/icons/link';
   import LoaderCircle from '@lucide/svelte/icons/loader-circle';
@@ -9,27 +10,40 @@
   import ShieldAlert from '@lucide/svelte/icons/shield-alert';
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
   import Users from '@lucide/svelte/icons/users';
-  import { onMount } from 'svelte';
-  import { findUUID, LOGIN_FOR_ADMIN, type Owner } from './lib/admin';
+  import { onMount, untrack } from 'svelte';
+  import { adminApi, findUUID, LOGIN_FOR_ADMIN, type Owner } from './lib/admin';
   import { app } from './lib/state.svelte';
   import AccountShell from './components/AccountShell.svelte';
   import Notice from './components/Notice.svelte';
   import Log from './components/admin/Log.svelte';
   import Overview from './components/admin/Overview.svelte';
+  import ReportsTab from './components/admin/Reports.svelte';
   import UrlsTab from './components/admin/Urls.svelte';
   import UsersTab from './components/admin/Users.svelte';
 
-  type Tab = 'overview' | 'users' | 'urls' | 'log';
+  type Tab = 'overview' | 'users' | 'urls' | 'reports' | 'log';
   const TABS: { id: Tab; label: string; icon: LucideIcon }[] = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'users', label: 'Users', icon: Users },
     { id: 'urls', label: 'URLs', icon: Link },
+    { id: 'reports', label: 'Reports', icon: Flag },
     { id: 'log', label: 'Log', icon: ScrollText },
   ];
 
   let tab = $state<Tab>('overview');
   let lookup = $state(''); // #urls/<id>
   let owner = $state<Owner | null>(null); // the URL list's owner filter
+
+  // Open abuse reports, shown on the Reports tab and in the header; counted
+  // again whenever the numbers are loaded or reports are closed.
+  let openReports = $state<number | null>(null);
+  async function countOpen() {
+    try {
+      openReports = (await adminApi.stats()).reports.open;
+    } catch {
+      /* the tabs say what went wrong */
+    }
+  }
 
   function route() {
     const [t, rest = ''] = location.hash.replace(/^#\/?/, '').split('/');
@@ -45,6 +59,16 @@
       clearInterval(ticker);
       removeEventListener('hashchange', route);
     };
+  });
+
+  // Once the admin is known (/api/me answers after the page mounts).
+  $effect(() => {
+    if (app.user?.role === 'admin') untrack(countOpen);
+  });
+
+  // Five tabs overflow a phone's width: keep the current one in view.
+  $effect(() => {
+    document.getElementById(`admin-tab-${tab}`)?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
   });
 
   // Signed out: sign in, then come back here.
@@ -83,6 +107,11 @@
         <div class="grow">
           <h1><ShieldCheck size={22} /> Admin</h1>
           <p>Every action here is logged, including opening someone's private URL.</p>
+          {#if openReports !== null}
+            <a class="chip open" class:warn={openReports > 0} href="#reports">
+              <Flag /> {openReports === 0 ? 'No open reports' : openReports === 1 ? '1 open report' : `${openReports} open reports`}
+            </a>
+          {/if}
         </div>
         <p class="me">
           <span class="muted">Signed in as</span> <a href="/account">{app.user.email}</a>
@@ -105,17 +134,20 @@
             onclick={() => go(t.id)}
           >
             <Icon /> {t.label}
+            {#if t.id === 'reports' && openReports}<span class="badge" aria-label={`${openReports} open`}>{openReports}</span>{/if}
           </button>
         {/each}
       </div>
 
       <div id="admin-panel" class="tabpanel" role="tabpanel" aria-labelledby={`admin-tab-${tab}`}>
         {#if tab === 'overview'}
-          <Overview />
+          <Overview onstats={(s) => (openReports = s.reports.open)} />
         {:else if tab === 'users'}
           <UsersTab onurls={showUrlsOf} />
         {:else if tab === 'urls'}
           <UrlsTab {lookup} bind:owner />
+        {:else if tab === 'reports'}
+          <ReportsTab onchange={countOpen} />
         {:else}
           <Log />
         {/if}
@@ -169,6 +201,27 @@
   }
   .head .me {
     overflow-wrap: anywhere;
+  }
+  .head .open {
+    margin-top: 8px;
+    text-decoration: none;
+  }
+  .head .open:hover {
+    border-color: var(--border-strong);
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: var(--warning-soft);
+    color: var(--warning);
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
   }
   .tabs {
     display: flex;

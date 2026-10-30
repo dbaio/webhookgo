@@ -359,6 +359,9 @@ Admins also have **Admin** in that menu, at `/admin`:
   takes any URL or UUID, anonymous or not, and shows what the instance knows
   about it, including the record `webhookgo audit` prints, with a delete
   button.
+- **Reports**: the URLs reported from the `/abuse` page, with their owner,
+  record and each report's message; delete the URL, disable its owner or
+  dismiss the reports. See [Abuse handling](#abuse-handling).
 - **Log**: every admin action, with who did it, from where and when. That
   includes opening someone else's private URL (noted once an hour per URL),
   links made from the command line, and the creation of the first admin.
@@ -375,6 +378,8 @@ session (an API key never reaches it):
 | `POST` | `/api/admin/users/<id>/reset` | A password reset link: `{"link", "expires_at"}`. |
 | `GET` | `/api/admin/urls` | Every private URL with its owner (`q`, `owner`, `page`, `per_page`). |
 | `GET` / `DELETE` | `/api/admin/urls/<id>` | What is known about any UUID: `{"token", "owner", "record"}`; delete the URL. |
+| `GET` | `/api/admin/reports` | Abuse reports grouped by URL, newest first (`status=open\|actioned\|dismissed\|all`, `page`, `per_page`). |
+| `POST` | `/api/admin/reports/resolve` | Close a URL's open reports: `{"token_id", "action": "delete_url"\|"disable_owner"\|"dismiss", "note"}` → `{"updated"}`. |
 
 ### Private URLs
 
@@ -493,6 +498,20 @@ Records live in Redis, next to the URLs:
 
 To block an abuser's IP address, use your firewall, or Cloudflare's IP Access
 Rules when it is in front.
+
+With [accounts](#accounts) on, a URL that belongs to an account shows on
+`/abuse` as private, with none of its details and no delete button: only the
+admins can act on it. The page then offers a form that reports the looked-up
+URLs, private and active anonymous ones alike, to the admins, who see them in
+the panel's **Reports** tab and delete the URL, disable its owner or dismiss
+the reports, with a note; each of these is logged. A report keeps the
+reporter's IP address, their message and, if they left one, a contact
+address. URLs that do not exist are accepted but not stored, an address's
+report of a URL is kept once a day, and each address may send ten reports an
+hour.
+
+The form posts `{"ids": [...], "message", "contact"}` (up to 50 IDs) to
+`POST /api/abuse/reports`, which answers `202` whether or not the IDs exist.
 
 ## Signature verification
 
