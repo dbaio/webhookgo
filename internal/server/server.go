@@ -10,10 +10,13 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/dbaio/webhookgo/internal/accounts"
 	"github.com/dbaio/webhookgo/internal/config"
 	"github.com/dbaio/webhookgo/internal/hub"
 	"github.com/dbaio/webhookgo/internal/store"
@@ -22,22 +25,33 @@ import (
 type Server struct {
 	cfg      config.Config
 	store    *store.Store
+	accounts *accounts.Store // nil when ACCOUNTS is off
 	hub      *hub.Hub
 	ui       *staticFiles
 	version  string
 	shutdown chan struct{}
 	heavy    chan struct{} // bounds concurrent searches and full-body lists
+
+	proxyWarning sync.Once // TRUST_PROXY=false behind an HTTPS proxy, logged once
 }
 
 const maxHeavy = 4
 
-func New(cfg config.Config, st *store.Store, h *hub.Hub, ui fs.FS, version string) (*Server, error) {
+// New builds the server. acc is nil when accounts are off: every account
+// feature then stays out of the way.
+func New(cfg config.Config, st *store.Store, acc *accounts.Store, h *hub.Hub, ui fs.FS, version string) (*Server, error) {
 	files, err := loadStatic(ui)
 	if err != nil {
 		return nil, err
 	}
+	files.pages = map[string]bool{"/": true, "/abuse": true}
+	if acc != nil {
+		for _, p := range []string{"/login", "/setup", "/invite", "/reset", "/account"} {
+			files.pages[p] = true
+		}
+	}
 	return &Server{
-		cfg: cfg, store: st, hub: h, ui: files, version: version,
+		cfg: cfg, store: st, accounts: acc, hub: h, ui: files, version: version,
 		shutdown: make(chan struct{}),
 		heavy:    make(chan struct{}, maxHeavy),
 	}, nil
@@ -64,8 +78,23 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /token/{token}/request/{request}/raw", s.rawRequest)
 	mux.HandleFunc("DELETE /token/{token}/request/{request}", s.deleteRequest)
 	mux.HandleFunc("GET /api/config", s.appConfig)
+	mux.HandleFunc("GET /api/me", s.me)
+	mux.HandleFunc("POST /api/login", s.withAccounts(s.login))
+	mux.HandleFunc("POST /api/logout", s.withAccounts(s.logout))
+	mux.HandleFunc("POST /api/links/inspect", s.withAccounts(s.inspectLink))
+	mux.HandleFunc("POST /api/links/redeem", s.withAccounts(s.redeemLink))
+	mux.HandleFunc("PATCH /api/account", s.withAccounts(s.updateAccount))
+	mux.HandleFunc("POST /api/account/password", s.withAccounts(s.changePassword))
+	mux.HandleFunc("POST /api/account/logout-others", s.withAccounts(s.logoutOthers))
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.Handle("GET /", s.ui)
+
+	// With accounts on, the API also refuses cross-origin writes and knows
+	// who is signed in. Captures never go through either.
+	var api http.Handler = mux
+	if s.accounts != nil {
+		api = s.crossOrigin().Handler(s.authenticate(mux))
+	}
 
 	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Anything under /<uuid> is a webhook call, whatever the method.
@@ -73,7 +102,7 @@ func (s *Server) Handler() http.Handler {
 			s.capture(w, r, id, rest)
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, "/token") {
+		if p := r.URL.Path; strings.HasPrefix(p, "/token") || strings.HasPrefix(p, "/api/") {
 			if ok, retry, err := s.store.Allow(r.Context(), "api", s.clientIP(r), s.cfg.APILimit); err != nil {
 				internalError(w, r, err)
 				return
@@ -81,6 +110,8 @@ func (s *Server) Handler() http.Handler {
 				tooManyRequests(w, retry)
 				return
 			}
+			api.ServeHTTP(w, r)
+			return
 		}
 		mux.ServeHTTP(w, r)
 	})
@@ -144,6 +175,23 @@ func (s *Server) clientIP(r *http.Request) string {
 	return host
 }
 
+// clientNetwork is the network the caller's address is in, /24 for IPv4 and
+// /56 for IPv6 (the usual size of one customer's allocation), for limits
+// that one address must not dodge by moving to the next.
+func (s *Server) clientNetwork(r *http.Request) string {
+	ip := s.clientIP(r)
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	addr = addr.Unmap()
+	bits := 24
+	if addr.Is6() {
+		bits = 56
+	}
+	return netip.PrefixFrom(addr, bits).Masked().String()
+}
+
 func (s *Server) scheme(r *http.Request) string {
 	if s.cfg.ProxyHops > 0 {
 		if p := r.Header.Get("X-Forwarded-Proto"); p == "https" || p == "http" {
@@ -184,6 +232,7 @@ func (s *Server) appConfig(w http.ResponseWriter, r *http.Request) {
 		"token_ttl":     int(s.cfg.TokenTTL.Seconds()),
 		"retention":     int(s.cfg.Retention.Seconds()),
 		"abuse_contact": s.cfg.AbuseContact,
+		"accounts":      s.accounts != nil,
 	})
 }
 

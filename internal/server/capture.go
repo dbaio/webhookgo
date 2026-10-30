@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/dbaio/webhookgo/internal/auth"
 	"github.com/dbaio/webhookgo/internal/signature"
 	"github.com/dbaio/webhookgo/internal/store"
 )
@@ -74,6 +75,10 @@ func (s *Server) capture(w http.ResponseWriter, r *http.Request, tokenID, rest s
 	if token.Signature != nil && !preflight {
 		check = token.Signature.Start(r.Header, time.Now())
 	}
+	// The UI itself calls capture URLs (the test request button), and a
+	// signed-in browser sends its session cookie along: it must never be
+	// recorded.
+	stripSessionCookies(r.Header)
 	req, body := s.newRequest(r, tokenID, rest, ip, check)
 	var rejection string
 	if sig := req.Signature; sig != nil && sig.Status != signature.Valid && token.Signature.Reject {
@@ -206,6 +211,34 @@ func (s *Server) newRequest(r *http.Request, tokenID, rest, ip string, check *si
 		req.Form, req.Files = parseMultipart(body, params["boundary"])
 	}
 	return req, body
+}
+
+// stripSessionCookies removes the app's session cookie from every Cookie
+// header, keeping the other cookies and dropping headers left empty.
+func stripSessionCookies(h http.Header) {
+	lines := h.Values("Cookie")
+	if len(lines) == 0 {
+		return
+	}
+	var kept []string
+	for _, line := range lines {
+		var parts []string
+		for part := range strings.SplitSeq(line, ";") {
+			part = strings.TrimSpace(part)
+			name, _, _ := strings.Cut(part, "=")
+			if part == "" || name == auth.SessionCookie || name == auth.HostSessionCookie {
+				continue
+			}
+			parts = append(parts, part)
+		}
+		if len(parts) > 0 {
+			kept = append(kept, strings.Join(parts, "; "))
+		}
+	}
+	h.Del("Cookie")
+	for _, line := range kept {
+		h.Add("Cookie", line)
+	}
 }
 
 // readBody keeps the first limit bytes and counts the rest. complete reports

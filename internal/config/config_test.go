@@ -13,6 +13,27 @@ func TestDefaults(t *testing.T) {
 	if c.ListenAddr != ":8080" || c.MaxRequests != 500 || c.TokenTTL != 7*24*time.Hour || c.MaxBodySize != 2<<20 || c.ProxyHops != 0 || c.MaxStorage != 64<<20 || c.Retention != 180*24*time.Hour {
 		t.Fatalf("unexpected defaults: %+v", c)
 	}
+	if c.Accounts || c.DatabaseURL != "" || c.SessionTTL != 30*24*time.Hour || c.LoginLimit != 10 {
+		t.Fatalf("unexpected account defaults: %+v", c)
+	}
+}
+
+func TestAccountsSwitch(t *testing.T) {
+	for in, want := range map[string]bool{"on": true, "off": false, "true": true, "false": false, "1": true, "0": false, "ON": true} {
+		t.Setenv("ACCOUNTS", in)
+		c, err := Load()
+		if err != nil || c.Accounts != want {
+			t.Errorf("ACCOUNTS=%s: %v, %v; want %v", in, c.Accounts, err, want)
+		}
+	}
+	t.Setenv("ACCOUNTS", "on")
+	t.Setenv("DATABASE_URL", "postgres://db/webhookgo")
+	t.Setenv("SESSION_TTL", "12h")
+	t.Setenv("LOGIN_RATE_LIMIT", "0")
+	c, err := Load()
+	if err != nil || c.DatabaseURL != "postgres://db/webhookgo" || c.SessionTTL != 12*time.Hour || c.LoginLimit != 0 {
+		t.Fatalf("parsed: %+v, %v", c, err)
+	}
 }
 
 func TestParsing(t *testing.T) {
@@ -58,12 +79,15 @@ func envSizeOf(t *testing.T, v string) (int64, error) {
 
 func TestInvalid(t *testing.T) {
 	for key, value := range map[string]string{
-		"MAX_REQUESTS":    "0",
-		"TOKEN_TTL":       "soon",
-		"MAX_BODY_SIZE":   "big",
-		"TRUST_PROXY":     "perhaps",
-		"MAX_DELAY":       "-1",
-		"AUDIT_RETENTION": "-1h",
+		"MAX_REQUESTS":     "0",
+		"TOKEN_TTL":        "soon",
+		"MAX_BODY_SIZE":    "big",
+		"TRUST_PROXY":      "perhaps",
+		"MAX_DELAY":        "-1",
+		"AUDIT_RETENTION":  "-1h",
+		"ACCOUNTS":         "maybe",
+		"SESSION_TTL":      "10s",
+		"LOGIN_RATE_LIMIT": "-1",
 	} {
 		t.Run(key, func(t *testing.T) {
 			t.Setenv(key, value)

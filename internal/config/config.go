@@ -29,6 +29,11 @@ type Config struct {
 	LogLevel     string
 	LogFormat    string
 	ShutdownWait time.Duration
+
+	Accounts    bool          // user accounts, backed by Postgres
+	DatabaseURL string        // Postgres connection string; empty = the PG* variables
+	SessionTTL  time.Duration // idle lifetime of a session
+	LoginLimit  int           // login attempts per minute per IP (0 disables)
 }
 
 func Load() (Config, error) {
@@ -41,10 +46,20 @@ func Load() (Config, error) {
 		LogLevel:     env("LOG_LEVEL", "info"),
 		LogFormat:    env("LOG_FORMAT", "text"),
 		ShutdownWait: 10 * time.Second,
+		DatabaseURL:  env("DATABASE_URL", ""),
 	}
 
 	var err error
+	if c.Accounts, err = envBool("ACCOUNTS", false); err != nil {
+		return c, err
+	}
 	if c.MaxRequests, err = envInt("MAX_REQUESTS", 500); err != nil {
+		return c, err
+	}
+	if c.LoginLimit, err = envInt("LOGIN_RATE_LIMIT", 10); err != nil {
+		return c, err
+	}
+	if c.SessionTTL, err = envDuration("SESSION_TTL", 30*24*time.Hour); err != nil {
 		return c, err
 	}
 	if c.MaxDelay, err = envInt("MAX_DELAY", 30); err != nil {
@@ -88,6 +103,10 @@ func Load() (Config, error) {
 		return c, fmt.Errorf("MAX_URL_STORAGE must not be negative")
 	case c.Retention < 0:
 		return c, fmt.Errorf("AUDIT_RETENTION must not be negative")
+	case c.SessionTTL < time.Minute:
+		return c, fmt.Errorf("SESSION_TTL must be at least 1m")
+	case c.LoginLimit < 0:
+		return c, fmt.Errorf("LOGIN_RATE_LIMIT must not be negative")
 	}
 	return c, nil
 }
@@ -97,6 +116,24 @@ func env(key, def string) string {
 		return strings.TrimSpace(v)
 	}
 	return def
+}
+
+// envBool accepts on/off as well as true/false and 1/0.
+func envBool(key string, def bool) (bool, error) {
+	v := strings.ToLower(env(key, ""))
+	switch v {
+	case "":
+		return def, nil
+	case "on":
+		return true, nil
+	case "off":
+		return false, nil
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return false, fmt.Errorf("%s: %q is not on/off", key, v)
+	}
+	return b, nil
 }
 
 func envInt(key string, def int) (int, error) {

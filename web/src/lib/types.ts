@@ -9,6 +9,36 @@ export interface AppConfig {
   /** Seconds a URL's audit record outlives it; 0 = none kept. */
   retention: number;
   abuse_contact: string;
+  /** User accounts are on (ACCOUNTS=on). */
+  accounts: boolean;
+}
+
+export type Role = 'admin' | 'user';
+
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  role: Role;
+  created_at: string;
+  last_login_at: string | null;
+}
+
+/** What a one-time link is for: the first admin, an invitation or a password reset. */
+export type LinkKind = 'setup' | 'invite' | 'reset';
+
+export interface LinkInfo {
+  kind: LinkKind;
+  /** The invited or reset address; empty for setup. */
+  email: string;
+  role: Role;
+}
+
+export interface RedeemInput {
+  token: string;
+  email?: string; // setup only
+  name?: string; // setup and invite
+  password: string;
 }
 
 export interface KV {

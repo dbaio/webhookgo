@@ -1,4 +1,4 @@
-import type { AppConfig, FullRequest, Page, Summary, Token, TokenInput } from './types';
+import type { AppConfig, FullRequest, LinkInfo, Page, RedeemInput, Summary, Token, TokenInput, User } from './types';
 
 export class ApiError extends Error {
   constructor(
@@ -62,6 +62,18 @@ export const api = {
   rawUrl: (id: string, rid: string, download = false) =>
     `/token/${id}/request/${rid}/raw${download ? '?download=1' : ''}`,
   streamUrl: (id: string) => `/token/${id}/stream`,
+
+  // Accounts (only with ACCOUNTS=on; /api/me answers null otherwise)
+  me: () => call<{ user: User | null }>('GET', '/api/me').then((r) => r.user),
+  login: (email: string, password: string) =>
+    call<{ user: User }>('POST', '/api/login', { email, password }).then((r) => r.user),
+  logout: () => call<void>('POST', '/api/logout'),
+  inspectLink: (token: string) => call<LinkInfo>('POST', '/api/links/inspect', { token }),
+  redeemLink: (input: RedeemInput) => call<{ user: User }>('POST', '/api/links/redeem', input).then((r) => r.user),
+  updateAccount: (input: { name: string }) => call<{ user: User }>('PATCH', '/api/account', input).then((r) => r.user),
+  changePassword: (current: string, next: string) =>
+    call<void>('POST', '/api/account/password', { current_password: current, new_password: next }),
+  logoutOthers: () => call<void>('POST', '/api/account/logout-others'),
 };
 
 export const isUUID = (s: string | undefined): s is string =>

@@ -10,6 +10,7 @@
   import GitHubMark from './GitHubMark.svelte';
   import HistoryMenu from './HistoryMenu.svelte';
   import PrefsMenu from './PrefsMenu.svelte';
+  import UserMenu from './UserMenu.svelte';
 
   let creating = $state(false);
   let stats = $state<RepoStats | null>(null);
@@ -72,6 +73,7 @@
     <button type="button" class="btn sm new" disabled={creating} title="Create a new URL (n)" onclick={newUrl}>
       <Plus /> <span class="label">New URL</span>
     </button>
+    {#if app.config.accounts}<UserMenu />{/if}
   </nav>
 </header>
 

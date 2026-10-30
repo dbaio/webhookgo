@@ -34,6 +34,7 @@ type asset struct {
 // staticFiles serves the embedded web UI from memory, pre-compressed.
 type staticFiles struct {
 	files map[string]*asset
+	pages map[string]bool // paths of the single-page app, served index.html
 }
 
 func loadStatic(fsys fs.FS) (*staticFiles, error) {
@@ -83,7 +84,7 @@ func compressible(ctype string) bool {
 
 func (sf *staticFiles) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
-	if p == "/" || p == "/abuse" { // pages of the single-page app
+	if sf.pages[p] {
 		p = "/index.html"
 	}
 	a := sf.files[p]

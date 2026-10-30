@@ -37,6 +37,7 @@ Server-Sent Events. No PHP, no Node at runtime, no socket.io server.
 - [Features](#features)
 - [Configuration](#configuration)
 - [Hosting](#hosting): Cloudflare Tunnel, ngrok, Caddy, nginx
+- [Accounts](#accounts): optional sign-in, backed by Postgres
 - [Abuse handling](#abuse-handling)
 - [Signature verification](#signature-verification)
 - [API](#api)
@@ -88,6 +89,7 @@ every `docker compose up -d`. To stay on a release, use a version tag such as
 - **Wait for a webhook** from scripts and end-to-end tests: one API call returns as soon as a matching request arrives.
 - **Responsive UI** with light/dark themes, keyboard shortcuts (`?`), desktop notifications, unread markers and a history of your URLs.
 - **Abuse handling**: an `/abuse` page where anyone can look up and delete reported URLs, with records kept for investigations.
+- **Accounts** (optional): sign in with an email and password, invite people with one-time links, no SMTP needed. Off by default; see [Accounts](#accounts).
 - **Safe defaults**: per-IP rate limits, body and per-URL storage caps, custom responses sandboxed with CSP, strict CSP on the app, distroless non-root read-only container (~12 MB image).
 
 ## Configuration
@@ -108,9 +110,14 @@ overrides in a `.env` file next to `docker-compose.yml` (see [`.env.example`](.e
 | `MAX_DELAY` | `30` | Maximum response delay, in seconds. |
 | `RATE_LIMIT` | `600` | Captured requests per minute per client IP (`0` = unlimited). |
 | `TOKEN_RATE_LIMIT` | `30` | New URLs per minute per client IP (`0` = unlimited). |
-| `API_RATE_LIMIT` | `1200` | API calls (`/token/…`) per minute per client IP (`0` = unlimited). |
+| `API_RATE_LIMIT` | `1200` | API calls (`/token/…`, `/api/…`) per minute per client IP (`0` = unlimited). |
 | `AUDIT_RETENTION` | `180d` | How long the record of a URL is kept after it expires or is deleted (`0` = none). See [Abuse handling](#abuse-handling). |
 | `ABUSE_CONTACT` | none | Email or URL shown on the `/abuse` page. |
+| `ACCOUNTS` | `off` | `on` enables sign-in; needs Postgres. See [Accounts](#accounts). |
+| `DATABASE_URL` | none | Postgres connection, e.g. `postgres://user:pass@host/db?sslmode=require`. Empty = the standard `PGHOST`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` and `PGSSLMODE` variables, which Compose sets for its own Postgres. |
+| `POSTGRES_PASSWORD` | `webhookgo` | Password of the Compose Postgres (Compose only). Set it before the first start. |
+| `SESSION_TTL` | `30d` | Signed-in sessions end after this long without activity. |
+| `LOGIN_RATE_LIMIT` | `10` | Login attempts per minute per client IP (`0` = unlimited); three times that per account and client network (/24, or /56 for IPv6), so nobody can lock you out of your account from elsewhere. |
 | `TRUST_PROXY` | `false` | Honour `X-Forwarded-*` from your reverse proxies: `true` for one, or how many. The client IP is read from the right of `X-Forwarded-For`, so it can't be spoofed. Behind Cloudflare's proxy, see [Behind Cloudflare](#behind-cloudflares-proxy). |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection (`rediss://` for TLS). |
 | `LISTEN_ADDR` | `:8080` | Address the server listens on. |
@@ -269,6 +276,108 @@ A Cloudflare Tunnel needs none of this: there the app reads the client from
 - **Request size**: allow request bodies of at least `MAX_BODY_SIZE`.
 - **Timeouts**: use a read timeout longer than `MAX_DELAY`.
 
+## Accounts
+
+Off by default: a plain `docker compose up -d` has no sign-in and nothing
+changes. Switched on, people sign in with an email and a password, and the
+app keeps users and sessions in Postgres. There is no open sign-up and no
+SMTP to configure: people join through one-time links that an admin hands
+them.
+
+### Enabling it
+
+Two lines in `.env`, then `docker compose up -d`:
+
+```sh
+# .env
+COMPOSE_PROFILES=accounts   # also start Postgres
+ACCOUNTS=on                 # and use it
+POSTGRES_PASSWORD=change-me
+```
+
+`COMPOSE_PROFILES=accounts` adds a `postgres` service to the stack, with no
+published port and its data in the `postgres-data` volume. Set
+`POSTGRES_PASSWORD` before the first start: Postgres reads it only when it
+creates the volume. To change it later, run `ALTER USER webhookgo PASSWORD
+'...'` in Postgres and update `.env`. `COMPOSE_PROFILES` and the
+`COMPOSE_FILE` of [Hosting](#hosting) are independent.
+
+The schema is created and upgraded by the app at startup, so a new version
+just needs `docker compose up -d`. Without Postgres the app refuses to start,
+with a message that says so.
+
+### The first admin
+
+While the instance has no admin, each start logs a one-time setup link:
+
+```sh
+docker compose logs app | grep setup
+# create the first admin: https://hooks.example.com/setup#AbC… (valid 1h)
+```
+
+Open it, fill in your email, name and password, and you are signed in as
+admin. Without `PUBLIC_URL` the log shows the path only; open it on the
+address you use for the app. The token sits in the URL fragment (after `#`),
+which browsers never send, so it does not reach proxies or access logs.
+
+### Inviting people
+
+Links are made from the command line and are valid for 72 hours, once:
+
+```sh
+docker compose exec app webhookgo users add you@example.com          # invite a user
+docker compose exec app webhookgo users add --admin you@example.com  # invite an admin
+docker compose exec app webhookgo users reset you@example.com        # password reset link
+docker compose exec app webhookgo users list
+```
+
+Send the link through a channel you trust: whoever opens it first gets the
+account. A reset link also signs the person out everywhere else. The same
+commands work with an external Postgres, as long as the environment has
+`ACCOUNTS=on` and the connection settings.
+
+Signed in, **Account** in the top-right menu lets you change your name and
+password, and sign out of your other devices. Changing the password ends
+every other session.
+
+### What is stored
+
+In Postgres: each user's email, name, role, password (as an argon2id hash),
+when it was created and last signed in; each session's hash, IP address,
+user agent and times, kept until it expires after `SESSION_TTL` without use;
+and the hashes of unused links. Secrets themselves are never stored.
+Captured requests stay in Redis, as before, and the session cookie is
+stripped from every captured request before it is recorded, since the UI
+itself can call capture URLs. The cookie is `HttpOnly`, `SameSite=Strict`,
+and `Secure` with the `__Host-` prefix when the app is served over HTTPS
+(`PUBLIC_URL` starts with `https://`, or `TRUST_PROXY` is set and the proxy
+says so).
+
+### Backup
+
+```sh
+docker compose exec postgres pg_dump -U webhookgo webhookgo > backup.sql
+docker compose exec -T postgres psql -U webhookgo webhookgo < backup.sql   # restore, on an empty database
+```
+
+> **`docker compose down -v` deletes the volumes**, and with them every
+> user and session. `docker compose down` keeps them.
+
+### External Postgres
+
+Any Postgres 14 or later works, managed ones included (no extensions are
+needed). Leave the profile off and point `DATABASE_URL` at it:
+
+```sh
+# .env
+ACCOUNTS=on
+DATABASE_URL=postgres://webhookgo:secret@db.example.com/webhookgo?sslmode=require
+```
+
+A password with special characters is easier to pass through the standard
+`PGHOST`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` and `PGSSLMODE` variables
+instead, which the app reads when `DATABASE_URL` is empty.
+
 ## Abuse handling
 
 A public instance will be abused, like any webhook service: phishing kits post
@@ -365,6 +474,15 @@ an unknown URL answers `404`, and a deleted one `410`.
 | `DELETE` | `/token/<token>/request` | Delete all requests. |
 | `GET` | `/token/<token>/stream` | Live events (Server-Sent Events). |
 | `GET` | `/healthz` | Health check (pings Redis). |
+| `GET` | `/api/config` | Instance settings for the UI, including `accounts`. |
+| `GET` | `/api/me` | The signed-in user, or `{"user": null}`. |
+| `POST` | `/api/login`, `/api/logout` | Sign in with `{"email", "password"}` (sets the session cookie) and out. [Accounts](#accounts) only. |
+| `POST` | `/api/links/inspect`, `/api/links/redeem` | Look at and use a one-time link: `{"token"}`, plus `email`, `name` and `password` as the link's kind needs. Accounts only. |
+| `PATCH` / `POST` | `/api/account`, `/api/account/password`, `/api/account/logout-others` | Rename (`{"name"}`), change the password (`{"current_password", "new_password"}`), end the other sessions. Accounts only. |
+
+With accounts on, the `/api/…` and `/token…` routes refuse state-changing
+requests that browsers mark as coming from another site. Requests from
+scripts, which carry no `Origin` or `Sec-Fetch-Site` header, are not affected.
 
 ```sh
 URL=$(curl -s -X POST localhost:8080/token -H 'Content-Type: application/json' \
@@ -427,6 +545,15 @@ make test         # go test -race ./... and svelte-check
 make build        # bin/webhookgo with the UI embedded
 ```
 
+The tests of [Accounts](#accounts) need a Postgres and are skipped without
+one. Point `TEST_DATABASE_URL` at any database you can create schemas in
+(each test uses its own, dropped afterwards), as the CI workflow does:
+
+```sh
+docker run -d --rm --name pg -e POSTGRES_PASSWORD=test -p 127.0.0.1:5432:5432 postgres:18-alpine
+TEST_DATABASE_URL='postgres://postgres:test@127.0.0.1:5432/postgres?sslmode=disable' go test -race ./...
+```
+
 ### Releases
 
 The CI workflow ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) builds
@@ -452,12 +579,14 @@ and choose *Public*. You only need to do this once.
 ### Layout
 
 ```
-cmd/webhookgo/       entry point (also `webhookgo healthcheck` and `webhookgo audit`)
+cmd/webhookgo/      entry point (also `webhookgo healthcheck`, `audit` and `users`)
 internal/config/    environment configuration
 internal/store/     Redis storage: atomic Lua scripts, hash-tagged keys, rate limiting
+internal/accounts/  Postgres storage for users, sessions and one-time links; embedded SQL migrations
+internal/auth/      argon2id passwords, secrets and the session cookie
 internal/hub/       one Redis pub/sub subscription fanned out to SSE clients
 internal/signature/ signature checks for webhook providers
-internal/server/    capture, JSON API, live stream, embedded static files
+internal/server/    capture, JSON API, accounts API, live stream, embedded static files
 web/                Svelte 5 + TypeScript + Vite UI, embedded via go:embed
 deploy/             Compose overrides and configs for tunnels and reverse proxies
 ```

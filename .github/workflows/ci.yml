@@ -9,6 +9,18 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -26,6 +38,8 @@ jobs:
           npm run check
           npm run build
       - name: Go
+        env:
+          TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/postgres?sslmode=disable
         run: |
           go vet ./...
           go test -race ./...

@@ -2,7 +2,7 @@ import { api, ApiError, isUUID } from './api';
 import { bytes } from './format';
 import { defaultForward, forward, type ForwardResult, type ForwardSettings } from './forward';
 import { read, write } from './storage';
-import type { AppConfig, FullRequest, LiveEvent, Summary, Token, TokenInput } from './types';
+import type { AppConfig, FullRequest, LiveEvent, Summary, Token, TokenInput, User } from './types';
 
 export interface Prefs {
   theme: 'system' | 'light' | 'dark';
@@ -65,6 +65,7 @@ class Store {
     token_ttl: 7 * 86400,
     retention: 0,
     abuse_contact: '',
+    accounts: false,
   });
   prefs = $state<Prefs>({ ...defaultPrefs, ...read<Partial<Prefs>>('wh:prefs', {}) });
   history = $state<HistoryEntry[]>(read<HistoryEntry[]>('wh:history', []));
@@ -72,6 +73,8 @@ class Store {
   now = $state(Date.now());
   mobile = $state(typeof matchMedia !== 'undefined' && matchMedia(MOBILE).matches);
   dialog = $state<Dialog>(null);
+  user = $state<User | null>(null); // who is signed in, with accounts on
+  userLoaded = $state(false); // /api/me has answered: until then the top bar shows neither "Sign in" nor an avatar
 
   token = $state<Token | null>(null);
   status = $state<'loading' | 'ready' | 'missing' | 'error'>('loading');
@@ -118,6 +121,7 @@ class Store {
     } catch {
       /* keep defaults */
     }
+    if (this.config.accounts) this.loadUser().catch(() => (this.userLoaded = true));
     window.addEventListener('hashchange', () => this.route());
     await this.route();
   }
@@ -641,6 +645,25 @@ class Store {
       const msg = res.error ?? `Forwarded to ${res.url} → ${res.status} ${res.statusText} (${res.ms} ms)`;
       this.toast(msg, res.ok ? 'success' : 'error');
     }
+  }
+
+  // --- Accounts -------------------------------------------------------------------
+
+  /** Asks the server who is signed in. Throws when it can't be reached. */
+  async loadUser() {
+    this.user = await api.me();
+    this.userLoaded = true;
+  }
+
+  /** Ends this browser's session and starts over from the home page. */
+  async signOut() {
+    try {
+      await api.logout();
+    } catch (e) {
+      this.toast(`Could not sign out: ${(e as Error).message}`, 'error');
+      return;
+    }
+    location.assign('/');
   }
 
   // --- Misc -----------------------------------------------------------------------

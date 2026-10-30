@@ -32,9 +32,24 @@ services:
       ABUSE_CONTACT: ${ABUSE_CONTACT:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
+      # Accounts (README → Accounts): off by default. With ACCOUNTS=on and
+      # COMPOSE_PROFILES=accounts, the app uses the postgres service below
+      # through the PG* variables; DATABASE_URL points at an external one.
+      ACCOUNTS: ${ACCOUNTS:-off}
+      DATABASE_URL: ${DATABASE_URL:-}
+      PGHOST: postgres
+      PGUSER: webhookgo
+      PGDATABASE: webhookgo
+      PGPASSWORD: ${POSTGRES_PASSWORD:-webhookgo}
+      PGSSLMODE: disable
+      SESSION_TTL: ${SESSION_TTL:-30d}
+      LOGIN_RATE_LIMIT: ${LOGIN_RATE_LIMIT:-10}
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
+        required: false # without the "accounts" profile the app starts without it
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -58,5 +73,26 @@ services:
       timeout: 3s
       retries: 10
 
+  # Only with COMPOSE_PROFILES=accounts. No ports: reachable from the Compose
+  # network only.
+  postgres:
+    image: postgres:18-alpine
+    profiles: [accounts]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: webhookgo
+      POSTGRES_USER: webhookgo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-webhookgo}
+    volumes:
+      - postgres-data:/var/lib/postgresql # the PG 18+ layout
+    healthcheck:
+      # -h forces TCP: while the image initialises, its temporary server
+      # only listens on the socket.
+      test: ["CMD-SHELL", "pg_isready -h localhost -U webhookgo -d webhookgo"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   redis-data:
+  postgres-data:

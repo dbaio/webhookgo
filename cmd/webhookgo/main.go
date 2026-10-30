@@ -16,6 +16,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/dbaio/webhookgo/internal/accounts"
 	"github.com/dbaio/webhookgo/internal/config"
 	"github.com/dbaio/webhookgo/internal/hub"
 	"github.com/dbaio/webhookgo/internal/server"
@@ -32,6 +33,8 @@ func main() {
 			os.Exit(healthcheck())
 		case "audit":
 			os.Exit(audit(os.Args[2:]))
+		case "users":
+			os.Exit(users(os.Args[2:]))
 		case "version", "-v", "--version":
 			fmt.Println(version)
 			return
@@ -69,7 +72,21 @@ func run() error {
 	defer stopHub()
 	go h.Run(hubCtx, st.Subscribe(hubCtx))
 
-	srv, err := server.New(cfg, st, h, web.FS(), version)
+	var acc *accounts.Store
+	if cfg.Accounts {
+		if acc, err = accounts.Open(ctx, cfg.DatabaseURL, 30); err != nil {
+			return err
+		}
+		defer acc.Close()
+		if err := acc.Migrate(ctx); err != nil {
+			return err
+		}
+		if err := bootstrapAdmin(ctx, cfg, acc); err != nil {
+			return err
+		}
+	}
+
+	srv, err := server.New(cfg, st, acc, h, web.FS(), version)
 	if err != nil {
 		return err
 	}
@@ -87,7 +104,7 @@ func run() error {
 	errc := make(chan error, 1)
 	go func() {
 		slog.Info("listening",
-			"addr", cfg.ListenAddr, "version", version, "redis", opts.Addr,
+			"addr", cfg.ListenAddr, "version", version, "redis", opts.Addr, "accounts", cfg.Accounts,
 			"max_requests", cfg.MaxRequests, "ttl", cfg.TokenTTL.String(), "max_body", cfg.MaxBodySize)
 		errc <- httpServer.ListenAndServe()
 	}()

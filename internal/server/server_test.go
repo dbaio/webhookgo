@@ -17,8 +17,10 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/dbaio/webhookgo/internal/accounts"
 	"github.com/dbaio/webhookgo/internal/config"
 	"github.com/dbaio/webhookgo/internal/hub"
 	"github.com/dbaio/webhookgo/internal/store"
@@ -34,9 +36,17 @@ type env struct {
 	srv *httptest.Server
 	mr  *miniredis.Miniredis
 	hub *hub.Hub
+	acc *accounts.Store
+	db  *pgx.Conn // the accounts schema, for tests that poke at it
 }
 
 func setup(t *testing.T, mutate ...func(*config.Config)) *env {
+	t.Helper()
+	return setupWith(t, nil, mutate...)
+}
+
+// setupWith builds a server with an accounts store (nil = accounts off).
+func setupWith(t *testing.T, acc *accounts.Store, mutate ...func(*config.Config)) *env {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -59,14 +69,14 @@ func setup(t *testing.T, mutate ...func(*config.Config)) *env {
 		"index.html":    {Data: []byte("<!doctype html><title>ui</title>")},
 		"assets/app.js": {Data: []byte(strings.Repeat("console.log(1);", 200))},
 	}
-	s, err := New(cfg, st, h, ui, "test")
+	s, err := New(cfg, st, acc, h, ui, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
 	t.Cleanup(s.Close)
-	return &env{t: t, srv: srv, mr: mr, hub: h}
+	return &env{t: t, srv: srv, mr: mr, hub: h, acc: acc}
 }
 
 func (e *env) do(method, path string, body io.Reader, headers ...string) *http.Response {
