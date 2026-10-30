@@ -32,12 +32,13 @@ func TestMain(m *testing.M) {
 }
 
 type env struct {
-	t   *testing.T
-	srv *httptest.Server
-	mr  *miniredis.Miniredis
-	hub *hub.Hub
-	acc *accounts.Store
-	db  *pgx.Conn // the accounts schema, for tests that poke at it
+	t      *testing.T
+	srv    *httptest.Server
+	server *Server
+	mr     *miniredis.Miniredis
+	hub    *hub.Hub
+	acc    *accounts.Store
+	db     *pgx.Conn // the accounts schema, for tests that poke at it
 }
 
 func setup(t *testing.T, mutate ...func(*config.Config)) *env {
@@ -48,13 +49,19 @@ func setup(t *testing.T, mutate ...func(*config.Config)) *env {
 // setupWith builds a server with an accounts store (nil = accounts off).
 func setupWith(t *testing.T, acc *accounts.Store, mutate ...func(*config.Config)) *env {
 	t.Helper()
+	return setupServer(t, acc, nil, mutate...)
+}
+
+// setupServer also lets a test adjust the server before it starts serving.
+func setupServer(t *testing.T, acc *accounts.Store, tune func(*Server), mutate ...func(*config.Config)) *env {
+	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { rdb.Close() })
 
 	cfg := config.Config{
 		AppName: "Test", MaxRequests: 500, TokenTTL: time.Hour, MaxBodySize: 1 << 20,
-		MaxDelay: 5, RateLimit: 0, TokenLimit: 0,
+		MaxDelay: 5, RateLimit: 0, TokenLimit: 0, AnonymousURLs: true,
 	}
 	for _, m := range mutate {
 		m(&cfg)
@@ -73,10 +80,13 @@ func setupWith(t *testing.T, acc *accounts.Store, mutate ...func(*config.Config)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if tune != nil {
+		tune(s)
+	}
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
 	t.Cleanup(s.Close)
-	return &env{t: t, srv: srv, mr: mr, hub: h, acc: acc}
+	return &env{t: t, srv: srv, server: s, mr: mr, hub: h, acc: acc}
 }
 
 func (e *env) do(method, path string, body io.Reader, headers ...string) *http.Response {
@@ -103,6 +113,9 @@ func (e *env) json(resp *http.Response, wantStatus int, v any) {
 		e.t.Fatalf("%s %s: status %d, want %d: %s", resp.Request.Method, resp.Request.URL.Path, resp.StatusCode, wantStatus, b)
 	}
 	if v != nil {
+		if m, ok := v.(*map[string]any); ok {
+			*m = nil // decoding into a used map would keep its old keys
+		}
 		if err := json.Unmarshal(b, v); err != nil {
 			e.t.Fatalf("decode %s: %v", b, err)
 		}

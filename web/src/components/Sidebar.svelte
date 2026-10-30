@@ -117,7 +117,12 @@
 
   <footer>
     <span class="live"><span class="live-dot {app.live}"></span>{liveLabel}</span>
-    <span class="muted" title="Older requests are dropped beyond this limit; the URL expires after this long without use">
+    <span
+      class="muted"
+      title={app.token?.expires_at === null
+        ? "Older requests are dropped beyond this limit, and all of them after this long without new ones; the private URL itself doesn't expire"
+        : 'Older requests are dropped beyond this limit; the URL expires after this long without use'}
+    >
       Last {app.config.max_requests} · {duration(app.config.token_ttl)}
     </span>
   </footer>

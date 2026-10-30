@@ -45,8 +45,10 @@ func (s *Server) capture(w http.ResponseWriter, r *http.Request, tokenID, rest s
 		return
 	}
 
-	token, err := s.store.GetToken(ctx, tokenID)
-	if _, ok := errors.AsType[*store.DeletedError](err); ok {
+	token, err := s.tokens.read(ctx, tokenID)
+	// A deleted private URL leaves no public trace: captures are anonymous,
+	// so it is a 404 like a URL that never existed.
+	if d, ok := errors.AsType[*store.DeletedError](err); ok && !d.Owned {
 		writeError(w, http.StatusGone, "URL deleted")
 		return
 	}
@@ -87,7 +89,7 @@ func (s *Server) capture(w http.ResponseWriter, r *http.Request, tokenID, rest s
 	}
 	req.ResponseStatus = status
 
-	total, evicted, err := s.store.AddRequest(ctx, req, body)
+	total, evicted, err := s.tokens.addRequest(ctx, req, body)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "URL not found or expired, create a new one")
 		return

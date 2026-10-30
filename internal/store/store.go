@@ -19,6 +19,13 @@
 //	wh:{id}:audit  HASH    who created the URL, how many requests it got and
 //	                       who deleted it; it expires the retention period
 //	                       after the URL does
+//
+// With accounts on, a URL that belongs to an account lives in Postgres and
+// its token key is only a cache: when it is missing, the caller restores it
+// (RestoreToken). A URL found nowhere is remembered for a minute, so that
+// random IDs do not become database queries:
+//
+//	wh:{id}:none   STRING  set when the URL exists neither here nor in Postgres
 package store
 
 import (
@@ -37,9 +44,18 @@ import (
 
 var ErrNotFound = errors.New("not found")
 
+// ErrOwned refuses a write made with an anonymous copy of a URL that an
+// account has claimed since the copy was read: going through would undo the
+// claim, or act on a private URL.
+var ErrOwned = errors.New("URL belongs to an account")
+
 // DeletedError reports a URL that was deleted, as opposed to one that expired
-// or never existed. It matches ErrNotFound.
-type DeletedError struct{ At time.Time }
+// or never existed. It matches ErrNotFound. Owned tells whether the URL
+// belonged to an account when it was deleted.
+type DeletedError struct {
+	At    time.Time
+	Owned bool
+}
 
 func (e *DeletedError) Error() string        { return "deleted" }
 func (e *DeletedError) Is(target error) bool { return target == ErrNotFound }
@@ -49,12 +65,16 @@ const EventChannelPrefix = "wh:events:"
 // scanChunk bounds how many full requests a search holds in memory at once.
 const scanChunk = 25
 
+// unknownTTL is how long a URL found nowhere is remembered as such.
+const unknownTTL = time.Minute
+
 func tokenKey(id string) string { return "wh:{" + id + "}:token" }
 func indexKey(id string) string { return "wh:{" + id + "}:index" }
 func sumKey(id string) string   { return "wh:{" + id + "}:sum" }
 func dataKey(id string) string  { return "wh:{" + id + "}:data" }
 func bodyKey(id string) string  { return "wh:{" + id + "}:body" }
 func auditKey(id string) string { return "wh:{" + id + "}:audit" }
+func noneKey(id string) string  { return "wh:{" + id + "}:none" }
 
 func EventChannel(id string) string { return EventChannelPrefix + id }
 
@@ -113,10 +133,35 @@ end
 return result
 `)
 
+// ownedLua defines owned(), for the scripts behind writes made with an
+// anonymous copy of the token: it tells whether the stored token (KEYS[1])
+// belongs to an account by now, in which case the copy is stale and the
+// write would undo the claim. Checked in the script, so a claim cannot slip
+// in between the check and the write.
+const ownedLua = `
+local function owned()
+  local v = redis.call('GET', KEYS[1])
+  if not v then return false end
+  local id = cjson.decode(v).owner_id
+  return id ~= nil and id ~= ''
+end
+`
+
+// saveAnonymousScript replaces an anonymous token, expiring in ARGV[2]
+// seconds, unless the URL belongs to an account by now (0).
+var saveAnonymousScript = redis.NewScript(ownedLua + `
+if owned() then return 0 end
+redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+return 1
+`)
+
 // deleteScript removes a URL's five keys. When audit records are kept
-// (ARGV[1] seconds), it notes who created and who deleted the URL in KEYS[6]
-// and starts the retention period; otherwise it removes the record too.
-var deleteScript = redis.NewScript(`
+// (ARGV[1] seconds), it notes who created and who deleted the URL in KEYS[6],
+// whether it belonged to an account (ARGV[8] = 1) and starts the retention
+// period; otherwise it removes the record too. A delete of an anonymous URL
+// that belongs to an account by now is refused (-1).
+var deleteScript = redis.NewScript(ownedLua + `
+if ARGV[8] ~= '1' and owned() then return -1 end
 for k = 1, 5 do redis.call('DEL', KEYS[k]) end
 local ttl = tonumber(ARGV[1])
 if ttl <= 0 then
@@ -125,8 +170,53 @@ if ttl <= 0 then
 end
 redis.call('HSET', KEYS[6], 'created_at', ARGV[2], 'ip', ARGV[3], 'user_agent', ARGV[4],
   'deleted_at', ARGV[5], 'deleted_ip', ARGV[6], 'deleted_user_agent', ARGV[7])
+if ARGV[8] == '1' then redis.call('HSET', KEYS[6], 'owned', 1) end
 redis.call('EXPIRE', KEYS[6], ttl)
 return 1
+`)
+
+// restoreScript puts a token read from Postgres back in the cache for ARGV[2]
+// seconds, unless a replica stored one meanwhile (which may be newer) or the
+// audit record (KEYS[6]) says the URL was deleted, which can happen after
+// the row was read, and fills in the creation fields of the audit record
+// (kept ARGV[3] seconds; 0 = none) if they are gone. It returns 1 when the
+// token was written.
+var restoreScript = redis.NewScript(`
+if redis.call('HEXISTS', KEYS[6], 'deleted_at') == 1 then return 0 end
+if not redis.call('SET', KEYS[1], ARGV[1], 'NX', 'EX', ARGV[2]) then return 0 end
+local audit = tonumber(ARGV[3])
+if audit > 0 then
+  redis.call('HSETNX', KEYS[6], 'created_at', ARGV[4])
+  redis.call('HSETNX', KEYS[6], 'ip', ARGV[5])
+  redis.call('HSETNX', KEYS[6], 'user_agent', ARGV[6])
+  redis.call('EXPIRE', KEYS[6], audit)
+end
+return 1
+`)
+
+// dropRestoredScript removes the token when it still is the one ARGV[1] that
+// RestoreToken wrote; a newer copy stays.
+var dropRestoredScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
+return 0
+`)
+
+// deleteRequestScript removes one request (ARGV[1]) and reports whether it
+// was there; refused (-1) for an anonymous copy of the token (ARGV[2] = 0)
+// when the URL belongs to an account by now.
+var deleteRequestScript = redis.NewScript(ownedLua + `
+if ARGV[2] ~= '1' and owned() then return -1 end
+local n = redis.call('ZREM', KEYS[2], ARGV[1])
+for k = 3, 5 do redis.call('HDEL', KEYS[k], ARGV[1]) end
+return n
+`)
+
+// clearRequestsScript removes every request of a URL, with the same refusal
+// (ARGV[1] = 0 for an anonymous copy of the token).
+var clearRequestsScript = redis.NewScript(ownedLua + `
+if ARGV[1] ~= '1' and owned() then return -1 end
+for k = 2, 5 do redis.call('DEL', KEYS[k]) end
+return 0
 `)
 
 type Store struct {
@@ -145,6 +235,9 @@ func New(rdb redis.UniversalClient, ttl time.Duration, maxRequests int, maxBytes
 }
 
 func (s *Store) TTL() time.Duration { return s.ttl }
+
+// Retention is how long audit records outlive a URL; 0 when none are kept.
+func (s *Store) Retention() time.Duration { return s.retention }
 
 func (s *Store) Ping(ctx context.Context) error { return s.rdb.Ping(ctx).Err() }
 
@@ -167,6 +260,15 @@ func (s *Store) auditTTL() int {
 // maxAuditUserAgent caps the user agents kept in audit records.
 const maxAuditUserAgent = 512
 
+// ownedFlag is 1 for a token that belongs to an account, for the scripts
+// that refuse writes made with an anonymous copy of a URL claimed meanwhile.
+func ownedFlag(t *Token) int {
+	if t.Owned() {
+		return 1
+	}
+	return 0
+}
+
 // marshal encodes without HTML escaping: <, > and & stay one byte.
 func marshal(v any) ([]byte, error) {
 	var buf bytes.Buffer
@@ -187,7 +289,26 @@ func (s *Store) SaveToken(ctx context.Context, t *Token) error {
 	return s.rdb.Set(ctx, tokenKey(t.ID), b, s.ttl).Err()
 }
 
-// CreateToken saves a new token and starts its audit record.
+// SaveAnonymousToken replaces an anonymous token and resets its expiry,
+// unless an account has claimed the URL since t was read: then t is stale
+// and it is ErrOwned.
+func (s *Store) SaveAnonymousToken(ctx context.Context, t *Token) error {
+	b, err := marshal(t)
+	if err != nil {
+		return err
+	}
+	n, err := saveAnonymousScript.Run(ctx, s.rdb, []string{tokenKey(t.ID)}, b, int(s.ttl.Seconds())).Int()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrOwned
+	}
+	return nil
+}
+
+// CreateToken saves a new token and starts its audit record. It also forgets
+// that the ID was unknown, in case someone probed it before.
 func (s *Store) CreateToken(ctx context.Context, t *Token) error {
 	b, err := marshal(t)
 	if err != nil {
@@ -195,6 +316,7 @@ func (s *Store) CreateToken(ctx context.Context, t *Token) error {
 	}
 	_, err = s.rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		p.Set(ctx, tokenKey(t.ID), b, s.ttl)
+		p.Del(ctx, noneKey(t.ID))
 		if ttl := s.auditTTL(); ttl > 0 {
 			p.HSet(ctx, auditKey(t.ID), "created_at", t.CreatedAt.UnixMilli(), "ip", t.IP,
 				"user_agent", clip(t.UserAgent, maxAuditUserAgent))
@@ -203,6 +325,67 @@ func (s *Store) CreateToken(ctx context.Context, t *Token) error {
 		return nil
 	})
 	return err
+}
+
+// ClaimToken saves a token that just got an owner and notes who claimed it
+// and when in the audit record.
+func (s *Store) ClaimToken(ctx context.Context, t *Token) error {
+	b, err := marshal(t)
+	if err != nil {
+		return err
+	}
+	_, err = s.rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.Set(ctx, tokenKey(t.ID), b, s.ttl)
+		p.Del(ctx, noneKey(t.ID))
+		if ttl := s.auditTTL(); ttl > 0 {
+			p.HSet(ctx, auditKey(t.ID), "claimed_at", t.UpdatedAt.UnixMilli(), "owner_id", t.OwnerID)
+			p.Expire(ctx, auditKey(t.ID), time.Duration(ttl)*time.Second)
+		}
+		return nil
+	})
+	return err
+}
+
+// RestoreToken puts a token that lives in Postgres back in the cache, unless
+// a replica already did or the audit record says the URL was deleted since
+// the row was read, and reports whether it was written. The caller reads it
+// again afterwards, so every replica sees the same value.
+func (s *Store) RestoreToken(ctx context.Context, t *Token) (bool, error) {
+	b, err := marshal(t)
+	if err != nil {
+		return false, err
+	}
+	n, err := restoreScript.Run(ctx, s.rdb, withAudit(t.ID), b, int(s.ttl.Seconds()), s.auditTTL(),
+		t.CreatedAt.UnixMilli(), t.IP, clip(t.UserAgent, maxAuditUserAgent)).Int()
+	return n == 1, err
+}
+
+// DropRestored takes back what RestoreToken wrote for t, when the row turned
+// out to be gone meanwhile, leaving a copy written since (a release) alone.
+func (s *Store) DropRestored(ctx context.Context, t *Token) error {
+	b, err := marshal(t)
+	if err != nil {
+		return err
+	}
+	return dropRestoredScript.Run(ctx, s.rdb, []string{tokenKey(t.ID)}, b).Err()
+}
+
+// Uncache drops a token from the cache, keeping its requests: the next read
+// restores it from Postgres. For a token that only lives in Redis it is a
+// delete without an audit record, so callers reserve it for owned URLs.
+func (s *Store) Uncache(ctx context.Context, id string) error {
+	return s.rdb.Del(ctx, tokenKey(id)).Err()
+}
+
+// MarkUnknown remembers for a minute that a URL exists nowhere.
+func (s *Store) MarkUnknown(ctx context.Context, id string) error {
+	return s.rdb.Set(ctx, noneKey(id), 1, unknownTTL).Err()
+}
+
+// IsUnknown reports whether MarkUnknown was called for the ID lately.
+func (s *Store) IsUnknown(ctx context.Context, id string) (bool, error) {
+	n, err := s.rdb.Exists(ctx, noneKey(id)).Result()
+	return n > 0, err
 }
 
 // GetToken loads a token and extends the life of the URL. A deleted URL
@@ -224,23 +407,38 @@ func (s *Store) GetToken(ctx context.Context, id string) (*Token, error) {
 
 // missing tells a deleted URL from one that expired or never existed.
 func (s *Store) missing(ctx context.Context, id string) error {
-	ms, err := s.rdb.HGet(ctx, auditKey(id), "deleted_at").Int64()
-	if errors.Is(err, redis.Nil) {
-		return ErrNotFound
-	}
+	vals, err := s.rdb.HMGet(ctx, auditKey(id), "deleted_at", "owned").Result()
 	if err != nil {
 		return err
 	}
-	return &DeletedError{At: time.UnixMilli(ms).UTC()}
+	at, ok := vals[0].(string)
+	if !ok {
+		return ErrNotFound
+	}
+	ms, err := strconv.ParseInt(at, 10, 64)
+	if err != nil {
+		return fmt.Errorf("audit record %s: deleted_at %q: %w", id, at, err)
+	}
+	owned, _ := vals[1].(string)
+	return &DeletedError{At: time.UnixMilli(ms).UTC(), Owned: owned == "1"}
 }
 
 // DeleteToken removes a URL and its requests. The audit record keeps who
-// created the URL and who (ip, userAgent) deleted it.
+// created the URL, whether it belonged to an account and who (ip, userAgent)
+// deleted it. An anonymous t whose URL an account has claimed since it was
+// read is stale: ErrOwned, and nothing is removed.
 func (s *Store) DeleteToken(ctx context.Context, t *Token, ip, userAgent string) error {
-	return deleteScript.Run(ctx, s.rdb, withAudit(t.ID), int(s.retention.Seconds()),
+	n, err := deleteScript.Run(ctx, s.rdb, withAudit(t.ID), int(s.retention.Seconds()),
 		t.CreatedAt.UnixMilli(), t.IP, clip(t.UserAgent, maxAuditUserAgent),
-		time.Now().UnixMilli(), ip, clip(userAgent, maxAuditUserAgent),
-	).Err()
+		time.Now().UnixMilli(), ip, clip(userAgent, maxAuditUserAgent), ownedFlag(t),
+	).Int()
+	if err != nil {
+		return err
+	}
+	if n < 0 {
+		return ErrOwned
+	}
+	return nil
 }
 
 // GetRecord returns what is known about a URL for an abuse investigation,
@@ -305,6 +503,38 @@ func (s *Store) CountRequests(ctx context.Context, tokenID string) (int64, error
 	return s.rdb.ZCard(ctx, indexKey(tokenID)).Result()
 }
 
+// Activity is how many requests a URL holds and when the newest arrived.
+type Activity struct {
+	Requests      int64
+	LastRequestAt *time.Time
+}
+
+// Activities reads the activity of several URLs in one round trip, without
+// extending their lives.
+func (s *Store) Activities(ctx context.Context, tokenIDs []string) ([]Activity, error) {
+	counts := make([]*redis.IntCmd, len(tokenIDs))
+	newest := make([]*redis.ZSliceCmd, len(tokenIDs))
+	_, err := s.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
+		for i, id := range tokenIDs {
+			counts[i] = p.ZCard(ctx, indexKey(id))
+			newest[i] = p.ZRevRangeWithScores(ctx, indexKey(id), 0, 0)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Activity, len(tokenIDs))
+	for i := range tokenIDs {
+		out[i].Requests = counts[i].Val()
+		if z := newest[i].Val(); len(z) > 0 {
+			at := time.UnixMilli(int64(z[0].Score)).UTC()
+			out[i].LastRequestAt = &at
+		}
+	}
+	return out, nil
+}
+
 // AddRequest stores a request and its raw body. It returns the number of
 // stored requests and the IDs evicted to stay within the limits.
 func (s *Store) AddRequest(ctx context.Context, r *Request, body []byte) (int64, []string, error) {
@@ -348,23 +578,29 @@ func (s *Store) GetRequest(ctx context.Context, tokenID, id string) (*Request, e
 	return reqs[0], nil
 }
 
-func (s *Store) DeleteRequest(ctx context.Context, tokenID, id string) (bool, error) {
-	var removed *redis.IntCmd
-	_, err := s.rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
-		removed = p.ZRem(ctx, indexKey(tokenID), id)
-		p.HDel(ctx, sumKey(tokenID), id)
-		p.HDel(ctx, dataKey(tokenID), id)
-		p.HDel(ctx, bodyKey(tokenID), id)
-		return nil
-	})
+// DeleteRequest removes one request of t's URL and reports whether it was
+// there. Like DeleteToken, it refuses a stale anonymous t with ErrOwned.
+func (s *Store) DeleteRequest(ctx context.Context, t *Token, id string) (bool, error) {
+	n, err := deleteRequestScript.Run(ctx, s.rdb, keys(t.ID), id, ownedFlag(t)).Int()
 	if err != nil {
 		return false, err
 	}
-	return removed.Val() > 0, nil
+	if n < 0 {
+		return false, ErrOwned
+	}
+	return n > 0, nil
 }
 
-func (s *Store) DeleteRequests(ctx context.Context, tokenID string) error {
-	return s.rdb.Del(ctx, keys(tokenID)[1:]...).Err()
+// DeleteRequests removes every request of t's URL, with the same refusal.
+func (s *Store) DeleteRequests(ctx context.Context, t *Token) error {
+	n, err := clearRequestsScript.Run(ctx, s.rdb, keys(t.ID), ownedFlag(t)).Int()
+	if err != nil {
+		return err
+	}
+	if n < 0 {
+		return ErrOwned
+	}
+	return nil
 }
 
 type ListOptions struct {

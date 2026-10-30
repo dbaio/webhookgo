@@ -21,8 +21,10 @@ import (
 )
 
 var (
-	ErrNotFound   = errors.New("not found")
-	ErrEmailTaken = errors.New("email already registered")
+	ErrNotFound    = errors.New("not found")
+	ErrEmailTaken  = errors.New("email already registered")
+	ErrURLOwned    = errors.New("URL already belongs to an account")
+	ErrTooManyURLs = errors.New("too many URLs")
 )
 
 //go:embed migrations/*.sql

@@ -118,6 +118,8 @@ overrides in a `.env` file next to `docker-compose.yml` (see [`.env.example`](.e
 | `POSTGRES_PASSWORD` | `webhookgo` | Password of the Compose Postgres (Compose only). Set it before the first start. |
 | `SESSION_TTL` | `30d` | Signed-in sessions end after this long without activity. |
 | `LOGIN_RATE_LIMIT` | `10` | Login attempts per minute per client IP (`0` = unlimited); three times that per account and client network (/24, or /56 for IPv6), so nobody can lock you out of your account from elsewhere. |
+| `ANONYMOUS_URLS` | `on` | With accounts on, `off` lets only signed-in people create URLs. See [Private URLs](#private-urls). |
+| `ACCOUNT_MAX_URLS` | `100` | Private URLs each account may own (`0` = unlimited). |
 | `TRUST_PROXY` | `false` | Honour `X-Forwarded-*` from your reverse proxies: `true` for one, or how many. The client IP is read from the right of `X-Forwarded-For`, so it can't be spoofed. Behind Cloudflare's proxy, see [Behind Cloudflare](#behind-cloudflares-proxy). |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection (`rediss://` for TLS). |
 | `LISTEN_ADDR` | `:8080` | Address the server listens on. |
@@ -340,12 +342,36 @@ Signed in, **Account** in the top-right menu lets you change your name and
 password, and sign out of your other devices. Changing the password ends
 every other session.
 
+### Private URLs
+
+A URL created while signed in is private: only its owner and the admins can
+open it in the app or through the API (anyone else gets `403`), and it does
+not expire. Its settings live in Postgres, so it survives Redis losing them;
+the requests it captures stay in Redis and follow `TOKEN_TTL`,
+`MAX_REQUESTS` and `MAX_URL_STORAGE` as always. Webhooks can still be sent
+to it by anyone: the capture side is public, as it has to be. Each account
+may own up to `ACCOUNT_MAX_URLS`. **Your URLs** in the menu lists them, on
+any browser.
+
+Anonymous URLs still work as before, with one addition: with accounts on,
+creating one returns a `claim_key`, once. The app keeps it in the browser's
+history, and after signing in offers to **save** those URLs to the account
+(`POST /token/<token>/claim` with the key). The key is what keeps someone
+who merely knows a URL's ID from taking it over. In the other direction,
+**Make anonymous** in a private URL's settings (`POST /token/<token>/release`)
+hands it back with a new `claim_key`, and it expires like any other from
+then on.
+
+For a private instance, set `ANONYMOUS_URLS=off`: creating a URL then needs
+a sign-in. URLs that already exist keep working.
+
 ### What is stored
 
 In Postgres: each user's email, name, role, password (as an argon2id hash),
 when it was created and last signed in; each session's hash, IP address,
 user agent and times, kept until it expires after `SESSION_TTL` without use;
-and the hashes of unused links. Secrets themselves are never stored.
+the hashes of unused links; and the settings of each private URL, with its
+owner. Secrets themselves are never stored.
 Captured requests stay in Redis, as before, and the session cookie is
 stripped from every captured request before it is recorded, since the UI
 itself can call capture URLs. The cookie is `HttpOnly`, `SameSite=Strict`,
@@ -458,13 +484,18 @@ curl -s localhost:8080/token/$TOKEN/request/latest | jq -e '.signature.status ==
 
 Routes mirror webhook.site's open-source API. Differences: `query` and `form` are
 ordered `[{name, value}]` lists (repeated names are kept), header names are lower-case,
-an unknown URL answers `404`, and a deleted one `410`.
+an unknown URL answers `404`, a deleted one `410`, and a [private one](#private-urls)
+`403` to anyone but its owner and the admins (every `/token/<token>…` route; capture
+stays public).
 
 | Method | Path | |
 | --- | --- | --- |
 | `ANY` | `/<token>[/<status>][/<path>]` | Capture a request. |
-| `POST` | `/token` | Create a URL. JSON or form body: `default_status`, `default_content`, `default_content_type`, `timeout`, `cors`, `description`, `response_headers` (`[{name, value}]`), `signature` (JSON only, see [Signature verification](#signature-verification)). |
+| `POST` | `/token` | Create a URL. JSON or form body: `default_status`, `default_content`, `default_content_type`, `timeout`, `cors`, `description`, `response_headers` (`[{name, value}]`), `signature` (JSON only, see [Signature verification](#signature-verification)). Signed in, the URL is private (`owner_id`, `expires_at: null`); anonymous with accounts on, the answer carries a one-time `claim_key`. |
+| `GET` | `/token` | The signed-in user's URLs, newest first: `page`, `per_page` (max 100), `q` (search in descriptions). Each item also has `latest_request_at`. Accounts only. |
 | `GET` / `PUT` / `PATCH` / `DELETE` | `/token/<token>` | Read, update (partial), delete a URL. |
+| `POST` | `/token/<token>/claim` | Make an anonymous URL yours: `{"claim_key"}`. Accounts only. |
+| `POST` | `/token/<token>/release` | Make a private URL anonymous again; the answer carries a new `claim_key`. Owner or admin. Accounts only. |
 | `PUT` | `/token/<token>/cors/toggle` | Toggle CORS. |
 | `GET` | `/token/<token>/requests` | List requests: `page`, `per_page`, `sorting=newest\|oldest`, `q` (search), `method=GET,POST`, `summary=1`. |
 | `GET` | `/token/<token>/request/latest` | Most recent request. |
@@ -602,7 +633,10 @@ time. Storing a request, evicting the oldest beyond `MAX_REQUESTS` /
 `MAX_URL_STORAGE` and refreshing the TTL happen in one Lua script. Searches
 scan requests in small chunks, so memory stays bounded. A sixth key,
 `wh:{id}:audit`, is the URL's record for [abuse handling](#abuse-handling): it
-expires `AUDIT_RETENTION` after the others.
+expires `AUDIT_RETENTION` after the others. With accounts on, a
+[private URL](#private-urls) has its settings in Postgres and `wh:{id}:token`
+is a cache of them, restored on a miss; `wh:{id}:none` remembers for a minute
+an ID that exists nowhere, so guesses do not reach Postgres.
 
 ## Contributing
 

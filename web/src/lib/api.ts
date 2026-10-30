@@ -1,4 +1,4 @@
-import type { AppConfig, FullRequest, LinkInfo, Page, RedeemInput, Summary, Token, TokenInput, User } from './types';
+import type { AppConfig, FullRequest, LinkInfo, Page, RedeemInput, Summary, Token, TokenInput, TokenItem, User } from './types';
 
 export class ApiError extends Error {
   constructor(
@@ -74,6 +74,15 @@ export const api = {
   changePassword: (current: string, next: string) =>
     call<void>('POST', '/api/account/password', { current_password: current, new_password: next }),
   logoutOthers: () => call<void>('POST', '/api/account/logout-others'),
+
+  // Private URLs (accounts on)
+  listTokens: ({ page = 1, perPage = 20, q = '' }: Pick<ListParams, 'page' | 'perPage' | 'q'> = {}) => {
+    const p = new URLSearchParams({ page: String(page), per_page: String(perPage) });
+    if (q) p.set('q', q);
+    return call<Page<TokenItem>>('GET', `/token?${p}`);
+  },
+  claimToken: (id: string, claimKey: string) => call<Token>('POST', `/token/${id}/claim`, { claim_key: claimKey }),
+  releaseToken: (id: string) => call<Token>('POST', `/token/${id}/release`),
 };
 
 export const isUUID = (s: string | undefined): s is string =>

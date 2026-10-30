@@ -30,10 +30,12 @@ type Config struct {
 	LogFormat    string
 	ShutdownWait time.Duration
 
-	Accounts    bool          // user accounts, backed by Postgres
-	DatabaseURL string        // Postgres connection string; empty = the PG* variables
-	SessionTTL  time.Duration // idle lifetime of a session
-	LoginLimit  int           // login attempts per minute per IP (0 disables)
+	Accounts      bool          // user accounts, backed by Postgres
+	DatabaseURL   string        // Postgres connection string; empty = the PG* variables
+	SessionTTL    time.Duration // idle lifetime of a session
+	LoginLimit    int           // login attempts per minute per IP (0 disables)
+	AnonymousURLs bool          // with accounts on, whether POST /token works without signing in
+	MaxURLs       int           // private URLs one account may own (0 = unlimited)
 }
 
 func Load() (Config, error) {
@@ -57,6 +59,12 @@ func Load() (Config, error) {
 		return c, err
 	}
 	if c.LoginLimit, err = envInt("LOGIN_RATE_LIMIT", 10); err != nil {
+		return c, err
+	}
+	if c.AnonymousURLs, err = envBool("ANONYMOUS_URLS", true); err != nil {
+		return c, err
+	}
+	if c.MaxURLs, err = envInt("ACCOUNT_MAX_URLS", 100); err != nil {
 		return c, err
 	}
 	if c.SessionTTL, err = envDuration("SESSION_TTL", 30*24*time.Hour); err != nil {
@@ -107,6 +115,8 @@ func Load() (Config, error) {
 		return c, fmt.Errorf("SESSION_TTL must be at least 1m")
 	case c.LoginLimit < 0:
 		return c, fmt.Errorf("LOGIN_RATE_LIMIT must not be negative")
+	case c.MaxURLs < 0:
+		return c, fmt.Errorf("ACCOUNT_MAX_URLS must not be negative")
 	}
 	return c, nil
 }

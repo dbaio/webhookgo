@@ -456,12 +456,15 @@ func TestClientNetwork(t *testing.T) {
 func TestPlainCookieIgnoredOverHTTPS(t *testing.T) {
 	e := setupAccounts(t, func(c *config.Config) { c.PublicURL = "https://hooks.example.com" })
 	_, c := e.firstAdmin("owner@example.com", "owner's password")
+	id := e.ownedToken(c, `{}`)["uuid"].(string)
 	// The same secret in a plain wg_session cookie, as one planted over HTTP
 	// or by a sibling domain would be, signs nobody in.
 	plain := &http.Cookie{Name: "wg_session", Value: c.Value}
 	if u := e.me(plain); u != nil {
 		t.Fatalf("plain cookie over https: %v", u)
 	}
+	e.json(e.as(plain, "GET", "/token/"+id, ""), 403, nil)
+	e.json(e.as(c, "GET", "/token/"+id, ""), 200, nil)
 }
 
 func TestCrossOriginProtection(t *testing.T) {

@@ -11,6 +11,8 @@ export interface AppConfig {
   abuse_contact: string;
   /** User accounts are on (ACCOUNTS=on). */
   accounts: boolean;
+  /** Anyone may create URLs without signing in. Always true with accounts off. */
+  anonymous_urls: boolean;
 }
 
 export type Role = 'admin' | 'user';
@@ -90,7 +92,18 @@ export interface Token {
   updated_at: string;
   url: string;
   request_count: number;
-  expires_at: string;
+  /** null for private URLs, which don't expire. */
+  expires_at: string | null;
+  /** The account a private URL belongs to; absent on anonymous ones. */
+  owner_id?: string;
+  /** Saves an anonymous URL to an account later. Sent once, by create and release, with accounts on. */
+  claim_key?: string;
+}
+
+/** One of the signed-in user's URLs (GET /token). */
+export interface TokenItem extends Token {
+  /** When the newest stored request arrived. */
+  latest_request_at: string | null;
 }
 
 export type TokenInput = Partial<
@@ -168,4 +181,7 @@ export type LiveEvent =
   | { type: 'request.deleted'; id: string; total: number }
   | { type: 'requests.cleared'; total: number }
   | { type: 'token.updated'; token: Token; total: number }
-  | { type: 'token.deleted'; total: number };
+  | { type: 'token.deleted'; total: number }
+  // Who may see the URL changed. No token data: anonymous viewers may be listening.
+  | { type: 'token.claimed' }
+  | { type: 'token.released' };

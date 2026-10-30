@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/dbaio/webhookgo/internal/accounts"
 	"github.com/dbaio/webhookgo/internal/signature"
 	"github.com/dbaio/webhookgo/internal/store"
 )
@@ -49,10 +50,12 @@ func (s *Server) publish(ctx context.Context, tokenID string, e event) {
 
 type tokenView struct {
 	*store.Token
-	Signature    *signatureView `json:"signature,omitempty"` // replaces the token's, which holds the secret
+	Signature    *signatureView `json:"signature,omitempty"`  // replaces the token's, which holds the secret
+	ClaimHash    string         `json:"claim_hash,omitempty"` // always empty: the hash never leaves Redis
+	ClaimKey     string         `json:"claim_key,omitempty"`  // only when an anonymous URL is created or released, with accounts on
 	URL          string         `json:"url"`
 	RequestCount int64          `json:"request_count"`
-	ExpiresAt    time.Time      `json:"expires_at"`
+	ExpiresAt    *time.Time     `json:"expires_at"` // null for a URL that belongs to an account
 }
 
 // signatureView is a URL's signature settings without the secret.
@@ -66,7 +69,10 @@ func (s *Server) view(r *http.Request, t *store.Token, count int64) *tokenView {
 		Token:        t,
 		URL:          s.baseURL(r) + "/" + t.ID,
 		RequestCount: count,
-		ExpiresAt:    time.Now().UTC().Add(s.store.TTL()).Truncate(time.Second),
+	}
+	if !t.Owned() {
+		expires := time.Now().UTC().Add(s.store.TTL()).Truncate(time.Second)
+		v.ExpiresAt = &expires
 	}
 	if t.Signature != nil {
 		v.Signature = &signatureView{Config: *t.Signature, HasSecret: t.Signature.Secret != ""}
@@ -76,25 +82,37 @@ func (s *Server) view(r *http.Request, t *store.Token, count int64) *tokenView {
 }
 
 // loadToken resolves {token} from the path, answering 404 itself when the URL
-// does not exist.
+// does not exist. It is also where a private URL is kept from everyone but
+// its owner and the admins (403), for every /token/{token}… route.
 func (s *Server) loadToken(w http.ResponseWriter, r *http.Request) (*store.Token, bool) {
 	id := strings.ToLower(r.PathValue("token"))
 	if !isUUID(id) {
 		writeError(w, http.StatusNotFound, "URL not found")
 		return nil, false
 	}
-	t, err := s.store.GetToken(r.Context(), id)
-	if d, ok := errors.AsType[*store.DeletedError](err); ok {
+	u := userFrom(r)
+	t, err := s.tokens.read(r.Context(), id)
+	if d, ok := errors.AsType[*store.DeletedError](err); ok && (!d.Owned || isAdmin(u)) {
 		writeJSON(w, http.StatusGone, map[string]any{"error": "URL deleted", "status": http.StatusGone, "deleted_at": d.At})
 		return nil, false
 	}
 	if errors.Is(err, store.ErrNotFound) {
+		// Including a deleted private URL, which leaves no public trace.
 		writeError(w, http.StatusNotFound, "URL not found or expired")
 		return nil, false
 	}
 	if err != nil {
 		internalError(w, r, err)
 		return nil, false
+	}
+	if t.Owned() {
+		switch {
+		case u == nil, u.ID != t.OwnerID && !isAdmin(u):
+			writeError(w, http.StatusForbidden, "URL is private")
+			return nil, false
+		case u.ID != t.OwnerID:
+			s.noteAdminAccess(r, u, t)
+		}
 	}
 	return t, true
 }
@@ -352,6 +370,11 @@ func validHeaderValue(s string) bool {
 }
 
 func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r)
+	if s.accounts != nil && u == nil && !s.cfg.AnonymousURLs {
+		writeError(w, http.StatusUnauthorized, "Sign in to create URLs")
+		return
+	}
 	ip := s.clientIP(r)
 	if ok, retry, err := s.store.Allow(r.Context(), "token", ip, s.cfg.TokenLimit); err != nil {
 		internalError(w, r, err)
@@ -380,11 +403,25 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	if err := s.store.CreateToken(r.Context(), t); err != nil {
+	// Signed in, the URL is private. Anonymous with accounts on, it comes
+	// with the key that lets an account claim it later, given out this once.
+	var claimKey string
+	switch {
+	case u != nil:
+		t.OwnerID = u.ID
+	case s.accounts != nil:
+		claimKey, t.ClaimHash = newClaimKey()
+	}
+	if err := s.tokens.create(r.Context(), t); errors.Is(err, accounts.ErrTooManyURLs) {
+		s.tooManyURLs(w)
+		return
+	} else if err != nil {
 		internalError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, s.view(r, t, 0))
+	v := s.view(r, t, 0)
+	v.ClaimKey = claimKey
+	writeJSON(w, http.StatusCreated, v)
 }
 
 func (s *Server) getToken(w http.ResponseWriter, r *http.Request) {
@@ -401,21 +438,24 @@ func (s *Server) getToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateToken(w http.ResponseWriter, r *http.Request) {
+	// The body first: a claim that lands while a slow body arrives would
+	// otherwise be missed, and the anonymous copy loaded before it saved.
+	in, err := decodeTokenInput(w, r)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
 	t, ok := s.loadToken(w, r)
 	if !ok {
 		return
 	}
-	in, err := decodeTokenInput(w, r)
-	if err == nil {
-		err = s.apply(t, in)
-	}
-	if err != nil {
+	if err := s.apply(t, in); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	v, err := s.saveAndAnnounce(r, t)
 	if err != nil {
-		internalError(w, r, err)
+		s.saveError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, v)
@@ -428,7 +468,7 @@ func (s *Server) toggleCORS(w http.ResponseWriter, r *http.Request) {
 	}
 	t.CORS = !t.CORS
 	if _, err := s.saveAndAnnounce(r, t); err != nil {
-		internalError(w, r, err)
+		s.saveError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"enabled": t.CORS})
@@ -437,7 +477,7 @@ func (s *Server) toggleCORS(w http.ResponseWriter, r *http.Request) {
 // saveAndAnnounce stores t and tells live clients about the change.
 func (s *Server) saveAndAnnounce(r *http.Request, t *store.Token) (*tokenView, error) {
 	t.UpdatedAt = time.Now().UTC()
-	if err := s.store.SaveToken(r.Context(), t); err != nil {
+	if err := s.tokens.update(r.Context(), t); err != nil {
 		return nil, err
 	}
 	n, err := s.store.CountRequests(r.Context(), t.ID)
@@ -449,13 +489,28 @@ func (s *Server) saveAndAnnounce(r *http.Request, t *store.Token) (*tokenView, e
 	return v, nil
 }
 
+// saveError answers a failed write: an anonymous URL claimed since loadToken
+// read it is private now, as loadToken would answer; a private URL deleted
+// or released from under the update is gone; anything else is a storage
+// problem.
+func (s *Server) saveError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, store.ErrOwned):
+		writeError(w, http.StatusForbidden, "URL is private")
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "URL not found or expired")
+	default:
+		internalError(w, r, err)
+	}
+}
+
 func (s *Server) deleteToken(w http.ResponseWriter, r *http.Request) {
 	t, ok := s.loadToken(w, r)
 	if !ok {
 		return
 	}
-	if err := s.store.DeleteToken(r.Context(), t, s.clientIP(r), r.UserAgent()); err != nil {
-		internalError(w, r, err)
+	if err := s.tokens.delete(r.Context(), t, s.clientIP(r), r.UserAgent()); err != nil {
+		s.saveError(w, r, err)
 		return
 	}
 	s.publish(r.Context(), t.ID, event{Type: "token.deleted"})
@@ -516,20 +571,25 @@ func (s *Server) listRequests(w http.ResponseWriter, r *http.Request) {
 		internalError(w, r, err)
 		return
 	}
-	offset := (o.Page - 1) * o.PerPage
+	writeJSON(w, http.StatusOK, pageOf(data, n, total, o.Page, o.PerPage))
+}
+
+// pageOf is the shape of every paged list: data holds n of total items.
+func pageOf(data any, n, total, page, perPage int) map[string]any {
+	offset := (page - 1) * perPage
 	from := 0
 	if n > 0 {
 		from = offset + 1
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	return map[string]any{
 		"data":         data,
 		"total":        total,
-		"per_page":     o.PerPage,
-		"current_page": o.Page,
+		"per_page":     perPage,
+		"current_page": page,
 		"is_last_page": offset+n >= total,
 		"from":         from,
 		"to":           offset + n,
-	})
+	}
 }
 
 func (s *Server) latestRequest(w http.ResponseWriter, r *http.Request) {
@@ -643,9 +703,9 @@ func (s *Server) deleteRequest(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	removed, err := s.store.DeleteRequest(r.Context(), t.ID, req.ID)
+	removed, err := s.store.DeleteRequest(r.Context(), t, req.ID)
 	if err != nil {
-		internalError(w, r, err)
+		s.saveError(w, r, err)
 		return
 	}
 	n, _ := s.store.CountRequests(r.Context(), t.ID)
@@ -658,8 +718,8 @@ func (s *Server) deleteRequests(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.store.DeleteRequests(r.Context(), t.ID); err != nil {
-		internalError(w, r, err)
+	if err := s.store.DeleteRequests(r.Context(), t); err != nil {
+		s.saveError(w, r, err)
 		return
 	}
 	s.publish(r.Context(), t.ID, event{Type: "requests.cleared"})

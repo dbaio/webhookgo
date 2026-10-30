@@ -26,13 +26,15 @@ type Server struct {
 	cfg      config.Config
 	store    *store.Store
 	accounts *accounts.Store // nil when ACCOUNTS is off
+	tokens   *tokens         // every read and write of a URL goes through it
 	hub      *hub.Hub
 	ui       *staticFiles
 	version  string
 	shutdown chan struct{}
 	heavy    chan struct{} // bounds concurrent searches and full-body lists
 
-	proxyWarning sync.Once // TRUST_PROXY=false behind an HTTPS proxy, logged once
+	streamRecheck time.Duration // how often a live stream re-checks its viewer's access (0 = never)
+	proxyWarning  sync.Once     // TRUST_PROXY=false behind an HTTPS proxy, logged once
 }
 
 const maxHeavy = 4
@@ -45,16 +47,19 @@ func New(cfg config.Config, st *store.Store, acc *accounts.Store, h *hub.Hub, ui
 		return nil, err
 	}
 	files.pages = map[string]bool{"/": true, "/abuse": true}
+	s := &Server{
+		cfg: cfg, store: st, accounts: acc, hub: h, ui: files, version: version,
+		tokens:   &tokens{store: st, accounts: acc, maxURLs: cfg.MaxURLs},
+		shutdown: make(chan struct{}),
+		heavy:    make(chan struct{}, maxHeavy),
+	}
 	if acc != nil {
 		for _, p := range []string{"/login", "/setup", "/invite", "/reset", "/account"} {
 			files.pages[p] = true
 		}
+		s.streamRecheck = streamRecheckEvery
 	}
-	return &Server{
-		cfg: cfg, store: st, accounts: acc, hub: h, ui: files, version: version,
-		shutdown: make(chan struct{}),
-		heavy:    make(chan struct{}, maxHeavy),
-	}, nil
+	return s, nil
 }
 
 // Close ends long-lived live streams so a graceful shutdown does not wait
@@ -64,6 +69,9 @@ func (s *Server) Close() { close(s.shutdown) }
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /token", s.createToken)
+	mux.HandleFunc("GET /token", s.withAccounts(s.listTokens))
+	mux.HandleFunc("POST /token/{token}/claim", s.withAccounts(s.claimToken))
+	mux.HandleFunc("POST /token/{token}/release", s.withAccounts(s.releaseToken))
 	mux.HandleFunc("GET /token/{token}", s.getToken)
 	mux.HandleFunc("PUT /token/{token}", s.updateToken)
 	mux.HandleFunc("PATCH /token/{token}", s.updateToken)
@@ -223,16 +231,17 @@ func (s *Server) baseURL(r *http.Request) string {
 
 func (s *Server) appConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"app_name":      s.cfg.AppName,
-		"version":       s.version,
-		"public_url":    s.cfg.PublicURL,
-		"max_requests":  s.cfg.MaxRequests,
-		"max_body_size": s.cfg.MaxBodySize,
-		"max_delay":     s.cfg.MaxDelay,
-		"token_ttl":     int(s.cfg.TokenTTL.Seconds()),
-		"retention":     int(s.cfg.Retention.Seconds()),
-		"abuse_contact": s.cfg.AbuseContact,
-		"accounts":      s.accounts != nil,
+		"app_name":       s.cfg.AppName,
+		"version":        s.version,
+		"public_url":     s.cfg.PublicURL,
+		"max_requests":   s.cfg.MaxRequests,
+		"max_body_size":  s.cfg.MaxBodySize,
+		"max_delay":      s.cfg.MaxDelay,
+		"token_ttl":      int(s.cfg.TokenTTL.Seconds()),
+		"retention":      int(s.cfg.Retention.Seconds()),
+		"abuse_contact":  s.cfg.AbuseContact,
+		"accounts":       s.accounts != nil,
+		"anonymous_urls": s.accounts == nil || s.cfg.AnonymousURLs,
 	})
 }
 

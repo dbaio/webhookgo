@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -9,10 +10,12 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/dbaio/webhookgo/internal/accounts"
 	"github.com/dbaio/webhookgo/internal/auth"
+	"github.com/dbaio/webhookgo/internal/store"
 )
 
 const (
@@ -421,4 +424,132 @@ func (s *Server) logoutOthers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Private URLs -----------------------------------------------------------
+
+// tokenItem is a URL in the signed-in user's list.
+type tokenItem struct {
+	*tokenView
+	LatestRequestAt *time.Time `json:"latest_request_at"`
+}
+
+// listTokens is GET /token: the user's URLs, newest first, with
+// ?page, ?per_page and ?q (a search on the description).
+func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r)
+	if u == nil {
+		writeError(w, http.StatusUnauthorized, "Sign in to list your URLs")
+		return
+	}
+	q := r.URL.Query()
+	page := min(max(atoiDefault(q.Get("page"), 1), 1), 1_000_000)
+	perPage := min(max(atoiDefault(q.Get("per_page"), 20), 1), 100)
+	tokens, total, err := s.accounts.ListURLs(r.Context(), u.ID, strings.TrimSpace(q.Get("q")), page, perPage)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	ids := make([]string, len(tokens))
+	for i, t := range tokens {
+		ids[i] = t.ID
+	}
+	activity, err := s.store.Activities(r.Context(), ids)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	items := make([]tokenItem, len(tokens))
+	for i, t := range tokens {
+		items[i] = tokenItem{tokenView: s.view(r, t, activity[i].Requests), LatestRequestAt: activity[i].LastRequestAt}
+	}
+	writeJSON(w, http.StatusOK, pageOf(items, len(items), total, page, perPage))
+}
+
+// claimToken is POST /token/{token}/claim: with the key given out when an
+// anonymous URL was created, the signed-in user makes it theirs.
+func (s *Server) claimToken(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r)
+	if u == nil {
+		writeError(w, http.StatusUnauthorized, errNotSignedIn)
+		return
+	}
+	id := strings.ToLower(r.PathValue("token"))
+	if !isUUID(id) {
+		writeError(w, http.StatusNotFound, "URL not found")
+		return
+	}
+	var in struct {
+		ClaimKey string `json:"claim_key"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	t, err := s.tokens.read(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) { // deleted ones included: there is nothing to claim
+		writeError(w, http.StatusNotFound, "URL not found or expired")
+		return
+	}
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	if t.Owned() {
+		writeError(w, http.StatusConflict, "This URL already belongs to an account")
+		return
+	}
+	hash := claimHash(strings.TrimSpace(in.ClaimKey))
+	if t.ClaimHash == "" || subtle.ConstantTimeCompare([]byte(hash), []byte(t.ClaimHash)) != 1 {
+		writeError(w, http.StatusForbidden, "Wrong claim key")
+		return
+	}
+	t.OwnerID, t.ClaimHash, t.UpdatedAt = u.ID, "", time.Now().UTC()
+	switch err := s.tokens.claim(r.Context(), t); {
+	case errors.Is(err, accounts.ErrTooManyURLs):
+		s.tooManyURLs(w)
+		return
+	case errors.Is(err, accounts.ErrURLOwned): // claimed twice at once
+		writeError(w, http.StatusConflict, "This URL already belongs to an account")
+		return
+	case err != nil:
+		internalError(w, r, err)
+		return
+	}
+	// No token data: anonymous viewers may still be listening.
+	s.publish(r.Context(), t.ID, event{Type: "token.claimed"})
+	n, err := s.store.CountRequests(r.Context(), t.ID)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.view(r, t, n))
+}
+
+// releaseToken is POST /token/{token}/release: the owner (or an admin) makes
+// a private URL anonymous again. It expires like any other from here on, and
+// the answer carries a new claim key, given out this once.
+func (s *Server) releaseToken(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.loadToken(w, r)
+	if !ok {
+		return
+	}
+	if !t.Owned() {
+		writeError(w, http.StatusConflict, "This URL is already anonymous")
+		return
+	}
+	key, hash := newClaimKey()
+	t.OwnerID, t.ClaimHash, t.UpdatedAt = "", hash, time.Now().UTC()
+	if err := s.tokens.release(r.Context(), t); err != nil {
+		internalError(w, r, err)
+		return
+	}
+	s.publish(r.Context(), t.ID, event{Type: "token.released"})
+	n, err := s.store.CountRequests(r.Context(), t.ID)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	v := s.view(r, t, n)
+	v.ClaimKey = key
+	writeJSON(w, http.StatusOK, v)
 }

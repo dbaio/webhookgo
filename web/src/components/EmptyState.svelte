@@ -67,7 +67,11 @@
     <li><strong>Force a status code</strong> by starting the path with it: <code>…/404</code>, <code>…/503/retry</code>.</li>
     <li><strong>Customize the response</strong> (status, body, headers, delay, CORS) with the <em>Response</em> button.</li>
     <li><strong>Forward</strong> requests to <code>localhost</code> right from your browser.</li>
-    <li>Keeps the last {app.config.max_requests} requests; the URL expires after {duration(app.config.token_ttl)} without use.</li>
+    {#if app.token?.expires_at === null}
+      <li>Keeps the last {app.config.max_requests} requests, for {duration(app.config.token_ttl)} without new ones; this private URL doesn't expire.</li>
+    {:else}
+      <li>Keeps the last {app.config.max_requests} requests; the URL expires after {duration(app.config.token_ttl)} without use.</li>
+    {/if}
   </ul>
 
   <OpenSource />

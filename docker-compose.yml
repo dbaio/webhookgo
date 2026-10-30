@@ -44,6 +44,8 @@ services:
       PGSSLMODE: disable
       SESSION_TTL: ${SESSION_TTL:-30d}
       LOGIN_RATE_LIMIT: ${LOGIN_RATE_LIMIT:-10}
+      ANONYMOUS_URLS: ${ANONYMOUS_URLS:-on}
+      ACCOUNT_MAX_URLS: ${ACCOUNT_MAX_URLS:-100}
     depends_on:
       redis:
         condition: service_healthy

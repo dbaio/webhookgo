@@ -24,11 +24,15 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	var n int
-	if err := db.QueryRow(ctx, "select count(*) from schema_migrations").Scan(&n); err != nil || n != 1 {
-		t.Fatalf("schema_migrations: %d rows, %v", n, err)
+	files, err := os.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, table := range []string{"users", "sessions", "one_time_links"} {
+	var n int
+	if err := db.QueryRow(ctx, "select count(*) from schema_migrations").Scan(&n); err != nil || n != len(files) {
+		t.Fatalf("schema_migrations: %d rows, want %d, %v", n, len(files), err)
+	}
+	for _, table := range []string{"users", "sessions", "one_time_links", "urls"} {
 		if _, err := db.Exec(ctx, "select 1 from "+table+" limit 1"); err != nil {
 			t.Errorf("table %s: %v", table, err)
 		}

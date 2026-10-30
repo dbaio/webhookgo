@@ -1,5 +1,5 @@
 import { api, ApiError, isUUID } from './api';
-import { bytes } from './format';
+import { bytes, duration } from './format';
 import { defaultForward, forward, type ForwardResult, type ForwardSettings } from './forward';
 import { read, write } from './storage';
 import type { AppConfig, FullRequest, LiveEvent, Summary, Token, TokenInput, User } from './types';
@@ -31,12 +31,20 @@ export interface HistoryEntry {
   description: string;
   created_at: string;
   last_seen: string;
+  owner_id?: string; // the account it belonged to when last seen here
+  claim_key?: string; // saves this anonymous URL to an account; never shown
 }
 
 export interface Toast {
   id: number;
   message: string;
   kind: 'info' | 'success' | 'error';
+  action?: ToastAction;
+}
+
+export interface ToastAction {
+  label: string;
+  run: () => void;
 }
 
 export type Dialog = null | 'settings' | 'forward' | 'shortcuts';
@@ -50,9 +58,30 @@ const POLL_MS = 3000;
 const POLL_HIDDEN_MS = 15_000;
 const POLL_PAGE = 20;
 const MOBILE = '(max-width: 899px)';
+const HISTORY_MAX = 30;
 
 /** The URL expired, never existed or was deleted. */
 const gone = (e: unknown) => e instanceof ApiError && (e.status === 404 || e.status === 410);
+
+/** A history entry for a URL as the server describes it now. */
+function entryFor(t: Token, prev: HistoryEntry | undefined, last_seen: string): HistoryEntry {
+  const entry: HistoryEntry = { id: t.uuid, description: t.description, created_at: t.created_at, last_seen };
+  // The claim key comes only once, and a URL saved to an account no longer needs it.
+  const claim_key = t.claim_key ?? prev?.claim_key;
+  if (t.owner_id) entry.owner_id = t.owner_id;
+  else if (claim_key) entry.claim_key = claim_key;
+  return entry;
+}
+
+// Past the limit the oldest entries go, those saved to an account first: the
+// server lists them anyway, while a lost claim key can't be recovered.
+function trim(list: HistoryEntry[]): HistoryEntry[] {
+  while (list.length > HISTORY_MAX) {
+    const i = list.findLastIndex((h, j) => j > 0 && !!h.owner_id);
+    list.splice(i > 0 ? i : list.length - 1, 1);
+  }
+  return list;
+}
 
 class Store {
   config = $state<AppConfig>({
@@ -66,6 +95,7 @@ class Store {
     retention: 0,
     abuse_contact: '',
     accounts: false,
+    anonymous_urls: true,
   });
   prefs = $state<Prefs>({ ...defaultPrefs, ...read<Partial<Prefs>>('wh:prefs', {}) });
   history = $state<HistoryEntry[]>(read<HistoryEntry[]>('wh:history', []));
@@ -75,10 +105,14 @@ class Store {
   dialog = $state<Dialog>(null);
   user = $state<User | null>(null); // who is signed in, with accounts on
   userLoaded = $state(false); // /api/me has answered: until then the top bar shows neither "Sign in" nor an avatar
+  claiming = $state(false); // saving URLs from this browser to the account
 
   token = $state<Token | null>(null);
-  status = $state<'loading' | 'ready' | 'missing' | 'error'>('loading');
+  // private: the URL belongs to an account this viewer isn't signed in to.
+  // welcome: nothing to open, and only signed-in users create URLs here.
+  status = $state<'loading' | 'ready' | 'missing' | 'private' | 'welcome' | 'error'>('loading');
   error = $state('');
+  privateId = $state(''); // the URL shown as private
   live = $state<'connecting' | 'live' | 'polling' | 'offline'>('connecting');
 
   requests = $state.raw<Summary[]>([]);
@@ -100,6 +134,11 @@ class Store {
   filtering = $derived(this.search.trim() !== '' || this.method !== '');
   webhookUrl = $derived(this.token ? `${this.config.public_url || location.origin}/${this.token.uuid}` : '');
   empty = $derived(this.status === 'ready' && this.total === 0 && !this.filtering && this.requests.length === 0);
+  // With ANONYMOUS_URLS=off only signed-in users create URLs. An older server
+  // that doesn't send the flag lets anyone.
+  canCreate = $derived(!this.config.accounts || this.config.anonymous_urls !== false || !!this.user);
+  /** Anonymous URLs created on this browser that the signed-in user can save to their account. */
+  claimable = $derived(this.user ? this.history.filter((h) => h.claim_key && !h.owner_id) : []);
 
   #es: EventSource | null = null;
   #retry = 0;
@@ -111,6 +150,7 @@ class Store {
   #openSeq = 0;
   #liveDuringLoad: Summary[] | null = null; // requests that arrived while a reset load was in flight
   #toastSeq = 0;
+  #userReady: Promise<void> = Promise.resolve(); // settles once /api/me has answered
 
   async init() {
     setInterval(() => (this.now = Date.now()), 5_000);
@@ -121,7 +161,11 @@ class Store {
     } catch {
       /* keep defaults */
     }
-    if (this.config.accounts) this.loadUser().catch(() => (this.userLoaded = true));
+    if (this.config.accounts)
+      this.#userReady = this.loadUser().then(
+        () => this.#offerClaims(),
+        () => void (this.userLoaded = true),
+      );
     window.addEventListener('hashchange', () => this.route());
     await this.route();
   }
@@ -147,7 +191,16 @@ class Store {
         if (await this.open(h.id, undefined, true)) return;
         if (this.#parseHash().token) return;
       }
-      await this.createToken();
+      // Then the account's newest URL, which may come from another browser.
+      await this.#userReady;
+      if (this.#parseHash().token) return;
+      if (this.user) {
+        const newest = await api.listTokens({ perPage: 1 }).then((p) => p.data[0], () => undefined);
+        if (newest && (await this.open(newest.uuid, undefined, true))) return;
+        if (this.#parseHash().token) return;
+      }
+      if (this.canCreate) await this.createToken();
+      else this.#welcome();
       return;
     }
     if (token !== this.token?.uuid) await this.open(token, request);
@@ -191,6 +244,10 @@ class Store {
         return false;
       }
       if (quiet) return false;
+      if (this.#denied(e)) {
+        this.#private(id); // kept in the history: signing in may open it
+        return false;
+      }
       this.status = 'error';
       this.error = e instanceof Error ? e.message : String(e);
       return false;
@@ -212,6 +269,10 @@ class Store {
   }
 
   async createToken(input: TokenInput = {}): Promise<Token | null> {
+    if (!this.canCreate) {
+      this.toast('Sign in to create URLs', 'error', 3200, { label: 'Sign in', run: () => location.assign('/login') });
+      return null;
+    }
     try {
       const t = await api.createToken(input);
       this.#remember(t);
@@ -253,13 +314,48 @@ class Store {
     this.toast('URL deleted');
     const next = this.history[0];
     if (next) this.go(next.id);
-    else await this.createToken();
+    else if (this.canCreate) await this.createToken();
+    else this.#welcome();
+  }
+
+  /** Makes a private URL anonymous again. Its new claim key goes to the history, so it can be saved back. */
+  async releaseToken(): Promise<boolean> {
+    if (!this.token) return false;
+    try {
+      this.token = await api.releaseToken(this.token.uuid);
+      this.#remember(this.token);
+      this.toast(`The URL is anonymous now: anyone with it can see it, and it expires after ${duration(this.config.token_ttl)} without use`, 'success', 5000);
+      return true;
+    } catch (e) {
+      this.toast((e as Error).message, 'error');
+      return false;
+    }
+  }
+
+  // The URL belongs to an account this viewer isn't signed in to (nor an admin).
+  #denied(e: unknown) {
+    return this.config.accounts && e instanceof ApiError && e.status === 403;
+  }
+
+  #private(id: string) {
+    this.#disconnect();
+    this.token = null;
+    this.privateId = id;
+    this.status = 'private';
+    this.dialog = null;
+  }
+
+  // Nothing to show, and only signed-in users create URLs: say so instead.
+  #welcome() {
+    this.#disconnect();
+    this.#reset();
+    this.status = 'welcome';
+    if (location.hash) history.replaceState(null, '', location.pathname + location.search);
   }
 
   #remember(t: Token) {
-    const now = new Date().toISOString();
-    const entry: HistoryEntry = { id: t.uuid, description: t.description, created_at: t.created_at, last_seen: now };
-    this.history = [entry, ...this.history.filter((h) => h.id !== t.uuid)].slice(0, 30);
+    const entry = entryFor(t, this.history.find((h) => h.id === t.uuid), new Date().toISOString());
+    this.history = trim([entry, ...this.history.filter((h) => h.id !== t.uuid)]);
     write('wh:history', this.history);
   }
 
@@ -493,9 +589,12 @@ class Store {
       await api.getToken(id);
       if (this.token?.uuid === id && !this.#es) this.#connect();
     } catch (e) {
+      if (this.token?.uuid !== id) return;
       if (gone(e)) {
         this.status = 'missing';
         this.token = null;
+      } else if (this.#denied(e)) {
+        this.#private(id); // e.g. a stream that reconnected after a claim or a release
       } else {
         this.#retryTimer = setTimeout(() => this.#reconnect(id), Math.min(30_000, 1000 * 2 ** this.#retry++));
       }
@@ -538,10 +637,13 @@ class Store {
       for (const r of fresh.reverse())
         this.#handle({ type: 'request.created', request: r, total: this.filtering ? this.total + 1 : res.total });
     } catch (e) {
+      if (this.token?.uuid !== id) return;
       if (gone(e)) {
         this.#disconnect();
         this.status = 'missing';
         this.token = null;
+      } else if (this.#denied(e)) {
+        this.#private(id);
       }
     }
   }
@@ -588,6 +690,29 @@ class Store {
         this.token = null;
         this.status = 'missing';
         break;
+      case 'token.claimed':
+      case 'token.released':
+        if (this.token) this.#recheck(this.token.uuid);
+        break;
+    }
+  }
+
+  // Who may see the URL changed: ask again, as this viewer. The server also
+  // ends the stream, so it reconnects with the new permissions.
+  async #recheck(id: string) {
+    try {
+      const t = await api.getToken(id);
+      if (this.token?.uuid !== id) return;
+      this.token = t;
+      this.#remember(t);
+    } catch (e) {
+      if (this.token?.uuid !== id) return;
+      if (this.#denied(e)) this.#private(id);
+      else if (gone(e)) {
+        this.#disconnect();
+        this.token = null;
+        this.status = 'missing';
+      }
     }
   }
 
@@ -666,15 +791,71 @@ class Store {
     location.assign('/');
   }
 
+  // Right after a sign-in (a user this browser didn't see last time), offer
+  // to save the anonymous URLs created here to the account.
+  #offerClaims() {
+    const last = read<string>('wh:user', '');
+    const now = this.user?.id ?? '';
+    if (now !== last) write('wh:user', now);
+    const n = this.claimable.length;
+    if (!now || now === last || !n) return;
+    const message =
+      n === 1
+        ? "Save the URL you created on this browser to your account? It becomes private and won't expire."
+        : `Save the ${n} URLs you created on this browser to your account? They become private and won't expire.`;
+    this.toast(message, 'info', 15_000, { label: n === 1 ? 'Save it' : 'Save all', run: () => this.claim(this.claimable) });
+  }
+
+  /** Saves anonymous URLs from this browser to the signed-in account, one at a time. Returns how many were saved. */
+  async claim(entries: HistoryEntry[]): Promise<number> {
+    const wanted = entries.filter((h) => h.claim_key);
+    if (this.claiming || !wanted.length) return 0;
+    this.claiming = true;
+    let saved = 0;
+    let why = '';
+    for (const h of wanted) {
+      try {
+        const t = await api.claimToken(h.id, h.claim_key!);
+        if (this.token?.uuid === t.uuid) this.token = t;
+        this.#patch(h.id, (e) => entryFor(t, e, e.last_seen)); // in place: not a visit
+        saved++;
+      } catch (e) {
+        const status = e instanceof ApiError ? e.status : 0;
+        if (gone(e)) {
+          this.forget(h.id);
+          why ||= 'deleted, expired or already in an account';
+        } else if (status === 409 || (status === 403 && /claim key/i.test((e as Error).message))) {
+          // Someone's already, or the key went stale with a release elsewhere: no use keeping it.
+          this.#patch(h.id, (e) => ({ ...e, claim_key: undefined }));
+          why ||= 'deleted, expired or already in an account';
+        } else {
+          why = (e as Error).message; // the account's limit, or the server can't be reached
+          break;
+        }
+      }
+    }
+    this.claiming = false;
+    const n = wanted.length;
+    if (saved === n) this.toast(n === 1 ? 'URL saved to your account' : `${n} URLs saved to your account`, 'success');
+    else if (saved) this.toast(`Saved ${saved} of ${n} URLs. The rest: ${why}`, 'error');
+    else this.toast(`Could not save ${n === 1 ? 'the URL' : 'the URLs'}: ${why}`, 'error');
+    return saved;
+  }
+
+  #patch(id: string, change: (h: HistoryEntry) => HistoryEntry) {
+    this.history = this.history.map((h) => (h.id === id ? change(h) : h));
+    write('wh:history', this.history);
+  }
+
   // --- Misc -----------------------------------------------------------------------
 
   savePrefs() {
     write('wh:prefs', $state.snapshot(this.prefs));
   }
 
-  toast(message: string, kind: Toast['kind'] = 'info', ms = 3200) {
+  toast(message: string, kind: Toast['kind'] = 'info', ms = 3200, action?: ToastAction) {
     const id = ++this.#toastSeq;
-    this.toasts = [...this.toasts.slice(-3), { id, message, kind }];
+    this.toasts = [...this.toasts.slice(-3), { id, message, kind, action }];
     setTimeout(() => this.dismiss(id), kind === 'error' ? ms * 2 : ms);
   }
 

@@ -1,14 +1,18 @@
 <script lang="ts">
   import LoaderCircle from '@lucide/svelte/icons/loader-circle';
+  import Lock from '@lucide/svelte/icons/lock';
+  import LogIn from '@lucide/svelte/icons/log-in';
   import Plus from '@lucide/svelte/icons/plus';
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
   import MousePointerClick from '@lucide/svelte/icons/mouse-pointer-click';
+  import Webhook from '@lucide/svelte/icons/webhook';
   import { onMount } from 'svelte';
   import { copyText } from './lib/clipboard';
   import { timeZone } from './lib/format';
   import { app } from './lib/state.svelte';
   import EmptyState from './components/EmptyState.svelte';
   import ForwardDialog from './components/ForwardDialog.svelte';
+  import Notice from './components/Notice.svelte';
   import RequestView from './components/RequestView.svelte';
   import ShortcutsDialog from './components/ShortcutsDialog.svelte';
   import Sidebar from './components/Sidebar.svelte';
@@ -107,8 +111,34 @@
         <TriangleAlert size={28} />
         <h1>This URL doesn't exist anymore</h1>
         <p>It may have been deleted, or it expired after {Math.round(app.config.token_ttl / 86400)} days without requests.</p>
-        <button type="button" class="btn primary" onclick={() => app.createToken()}><Plus /> Create a new URL</button>
+        {#if app.canCreate}
+          <button type="button" class="btn primary" onclick={() => app.createToken()}><Plus /> Create a new URL</button>
+        {:else}
+          <a class="btn primary" href="/login"><LogIn /> Sign in to create URLs</a>
+        {/if}
       </div>
+    </div>
+  {:else if app.status === 'private'}
+    <div class="center">
+      <Notice icon={Lock} tone="accent" title="This URL is private">
+        Only its owner and the admins can see it.
+        {#if app.user}You're signed in as <strong>{app.user.email}</strong>.{/if}
+        {#snippet actions()}
+          {#if app.userLoaded && !app.user}
+            <a class="btn primary" href={`/login?next=${app.privateId}`}><LogIn /> Sign in</a>
+          {/if}
+          {#if app.canCreate}
+            <button type="button" class="btn" class:primary={!!app.user} onclick={() => app.createToken()}><Plus /> Create a new URL</button>
+          {/if}
+        {/snippet}
+      </Notice>
+    </div>
+  {:else if app.status === 'welcome'}
+    <div class="center">
+      <Notice icon={Webhook} tone="accent" title={`Welcome to ${app.config.app_name}`}>
+        Capture webhooks and other HTTP requests, and inspect them as they arrive. Here, only signed-in users create URLs.
+        {#snippet actions()}<a class="btn primary" href="/login"><LogIn /> Sign in to create URLs</a>{/snippet}
+      </Notice>
     </div>
   {:else if app.status === 'error'}
     <div class="center">

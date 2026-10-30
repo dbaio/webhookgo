@@ -1,4 +1,5 @@
 <script lang="ts">
+  import LockOpen from '@lucide/svelte/icons/lock-open';
   import Plus from '@lucide/svelte/icons/plus';
   import Sparkles from '@lucide/svelte/icons/sparkles';
   import Trash2 from '@lucide/svelte/icons/trash-2';
@@ -24,6 +25,7 @@
   let headers = $state<KV[]>([]);
   let saving = $state(false);
   let confirmDelete = $state(false);
+  let confirmRelease = $state(false);
 
   let sigScheme = $state<SignatureScheme | ''>('');
   let sigSecret = $state('');
@@ -48,6 +50,7 @@
     description = t.description;
     headers = t.response_headers.map((h) => ({ ...h }));
     confirmDelete = false;
+    confirmRelease = false;
 
     const sig = t.signature;
     sigScheme = sig?.scheme ?? '';
@@ -85,6 +88,10 @@
     signature: signatureInput(),
   });
 
+  // A private URL: its owner and the admins may make it anonymous again.
+  const mine = $derived(!!app.token?.owner_id && app.token.owner_id === app.user?.id);
+  const canRelease = $derived(!!app.token?.owner_id && (mine || app.user?.role === 'admin'));
+
   const jsonInvalid = $derived(contentType.includes('json') && content.trim() !== '' && !parseJson(content));
 
   async function save() {
@@ -99,7 +106,7 @@
     const t = await app.createToken(input());
     saving = false;
     if (t) {
-      app.toast('New URL created with this response', 'success');
+      app.toast(t.owner_id ? 'New private URL created with this response' : 'New URL created with this response', 'success');
       onclose();
     }
   }
@@ -113,6 +120,17 @@
     await app.deleteToken();
   }
 
+  async function release() {
+    if (!confirmRelease) {
+      confirmRelease = true;
+      return;
+    }
+    saving = true;
+    await app.releaseToken();
+    saving = false;
+    confirmRelease = false;
+  }
+
   function formatBody() {
     const n = parseJson(content);
     if (n) content = jsonText(n);
@@ -124,7 +142,11 @@
     <form id="token-form" class="form" onsubmit={(e) => { e.preventDefault(); save(); }}>
       <div class="info">
         <span>Created {ago(app.token.created_at, app.now)}</span>
-        <span title={dateTime(app.token.expires_at, app.prefs.utc)}>Expires after {duration(app.config.token_ttl)} without use</span>
+        {#if app.token.expires_at}
+          <span title={dateTime(app.token.expires_at, app.prefs.utc)}>Expires after {duration(app.config.token_ttl)} without use</span>
+        {:else}
+          <span title={`Its requests are still dropped after ${duration(app.config.token_ttl)} without new ones`}>Doesn't expire</span>
+        {/if}
         <span>{app.total} / {app.config.max_requests} requests kept</span>
       </div>
 
@@ -268,6 +290,24 @@
           </div>
         {/if}
       </div>
+
+      {#if canRelease}
+        <div class="group">
+          <div class="field">
+            <span class="label">Private URL</span>
+            <span class="hint">
+              Only {mine ? 'you' : 'its owner'} and the admins can see it, and it doesn't expire. Made anonymous, it leaves
+              {mine ? 'your' : "its owner's"} account: anyone with the URL can see it, and it expires after
+              {duration(app.config.token_ttl)} without use. This browser can save it back to {mine ? 'your' : 'an'} account from the history menu.
+            </span>
+          </div>
+          <div>
+            <button type="button" class="btn sm" class:confirm={confirmRelease} disabled={saving} onclick={release}>
+              <LockOpen /> {confirmRelease ? 'Click again to make it anonymous' : 'Make anonymous'}
+            </button>
+          </div>
+        </div>
+      {/if}
     </form>
   {/if}
 
@@ -276,7 +316,9 @@
       <Trash2 /> {confirmDelete ? 'Click again to delete this URL' : 'Delete URL'}
     </button>
     <span class="grow"></span>
-    <button type="button" class="btn sm" disabled={saving} onclick={saveAsNew} title="Keep this URL and create another one with these settings">Save as new URL</button>
+    {#if app.canCreate}
+      <button type="button" class="btn sm" disabled={saving} onclick={saveAsNew} title="Keep this URL and create another one with these settings">Save as new URL</button>
+    {/if}
     <button type="submit" form="token-form" class="btn primary sm" disabled={saving}>Save</button>
   {/snippet}
 </Modal>

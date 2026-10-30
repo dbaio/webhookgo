@@ -3,11 +3,15 @@
   import LogIn from '@lucide/svelte/icons/log-in';
   import LogOut from '@lucide/svelte/icons/log-out';
   import { emailProblem } from './lib/account';
-  import { api } from './lib/api';
+  import { api, isUUID } from './lib/api';
   import { app } from './lib/state.svelte';
   import AccountShell from './components/AccountShell.svelte';
   import AuthCard from './components/AuthCard.svelte';
   import Notice from './components/Notice.svelte';
+
+  // Back to the private URL that asked for a sign-in, else home.
+  const next = new URLSearchParams(location.search).get('next') ?? undefined;
+  const home = isUUID(next) ? `/#/${next.toLowerCase()}` : '/';
 
   let email = $state('');
   let password = $state('');
@@ -27,7 +31,7 @@
     busy = true;
     try {
       await api.login(email.trim(), password);
-      location.assign('/');
+      location.assign(home);
     } catch (e) {
       error = (e as Error).message;
       busy = false;
@@ -41,7 +45,7 @@
     <Notice icon={CircleCheck} tone="accent" title="You're signed in">
       As <strong>{app.user.email}</strong>.
       {#snippet actions()}
-        <a class="btn primary" href="/">Go to {app.config.app_name}</a>
+        <a class="btn primary" href={home}>Go to {app.config.app_name}</a>
         <button type="button" class="btn" onclick={() => app.signOut()}><LogOut /> Sign out</button>
       {/snippet}
     </Notice>

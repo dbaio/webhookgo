@@ -25,12 +25,17 @@ type Token struct {
 	ResponseHeaders    []Header          `json:"response_headers"`
 	Timeout            int               `json:"timeout"`
 	CORS               bool              `json:"cors"`
-	Signature          *signature.Config `json:"signature,omitempty"` // checks every request; the API never sends its secret back
+	Signature          *signature.Config `json:"signature,omitempty"`  // checks every request; the API never sends its secret back
+	OwnerID            string            `json:"owner_id,omitempty"`   // the account the URL belongs to; "" = anonymous
+	ClaimHash          string            `json:"claim_hash,omitempty"` // hex SHA-256 of the key that lets an account claim an anonymous URL; never sent by the API
 	IP                 string            `json:"ip"`
 	UserAgent          string            `json:"user_agent"`
 	CreatedAt          time.Time         `json:"created_at"`
 	UpdatedAt          time.Time         `json:"updated_at"`
 }
+
+// Owned reports whether the URL belongs to an account.
+func (t *Token) Owned() bool { return t.OwnerID != "" }
 
 // Record is what is kept about a URL for abuse investigations: it outlives
 // the URL by the retention period.

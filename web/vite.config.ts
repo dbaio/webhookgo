@@ -15,7 +15,7 @@ export default defineConfig({
   plugins: [svelte(), keepDist()],
   server: {
     proxy: {
-      '^/(token|api|healthz)(/|$)': backend,
+      '^/(token|api|healthz)([/?]|$)': backend,
       '^/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-': backend,
     },
   },

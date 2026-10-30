@@ -159,6 +159,54 @@ func TestWaitEndsWhenURLIsDeleted(t *testing.T) {
 	}
 }
 
+func TestWaitEndsForAnonymousAfterClaim(t *testing.T) {
+	e := setupAccounts(t)
+	_, c := e.invite("owner@example.com", "owner's password")
+	tok := e.newToken(`{}`)
+	id := tok["uuid"].(string)
+	e.waitFor("pub/sub", func() bool { return e.mr.PubSubNumPat() > 0 })
+
+	// An anonymous caller and the account about to claim the URL both wait.
+	open := func(c *http.Cookie) <-chan *http.Response {
+		req, _ := http.NewRequest("GET", e.srv.URL+"/token/"+id+"/wait?timeout=10", nil)
+		if c != nil {
+			req.AddCookie(c)
+		}
+		done := make(chan *http.Response, 1)
+		go func() {
+			resp, _ := http.DefaultClient.Do(req)
+			done <- resp
+		}()
+		return done
+	}
+	recv := func(done <-chan *http.Response) *http.Response {
+		t.Helper()
+		resp := <-done
+		if resp == nil {
+			t.Fatal("the wait failed")
+		}
+		t.Cleanup(func() { resp.Body.Close() })
+		return resp
+	}
+	anon, owner := open(nil), open(c)
+	e.waitFor("the waits to subscribe", func() bool { return e.hub.Clients(id) == 2 })
+	e.json(e.as(c, "POST", "/token/"+id+"/claim", `{"claim_key":"`+tok["claim_key"].(string)+`"}`), 200, nil)
+
+	// The anonymous one is refused, as loadToken would refuse it now; the
+	// owner's goes on and gets the next request.
+	var fail map[string]any
+	e.json(recv(anon), http.StatusForbidden, &fail)
+	if fail["error"] != "URL is private" {
+		t.Fatalf("anonymous wait after the claim: %v", fail)
+	}
+	e.do("POST", "/"+id+"/after", strings.NewReader("x"))
+	var req store.Request
+	e.json(recv(owner), http.StatusOK, &req)
+	if req.Path != "/after" {
+		t.Fatalf("owner's wait after the claim: %+v", req)
+	}
+}
+
 func TestParseSince(t *testing.T) {
 	want := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
 	for _, v := range []string{"1792238400", "1792238400.000", "1792238400000", "2026-10-17T12:00:00Z", "2026-10-17T09:00:00-03:00"} {

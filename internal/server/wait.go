@@ -31,6 +31,7 @@ const (
 	waitFound waitOutcome = iota
 	waitTimeout
 	waitGone     // the URL was deleted
+	waitPrivate  // the URL was claimed by an account, and the caller may no longer watch it
 	waitResync   // events may have been missed: read the history again
 	waitLeft     // the client went away
 	waitShutdown // the server is stopping
@@ -65,7 +66,7 @@ func (s *Server) wait(w http.ResponseWriter, r *http.Request) {
 		if err == nil && req == nil {
 			out = waitTimeout
 			if timeout > 0 {
-				req, out, err = s.nextMatch(ctx, events, t.ID, since, m, expired.C)
+				req, out, err = s.nextMatch(r, events, t.ID, since, m, expired.C)
 			}
 		}
 		cancel()
@@ -79,6 +80,8 @@ func (s *Server) wait(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusRequestTimeout, fmt.Sprintf("no matching request within %s", timeout))
 		case out == waitGone:
 			writeError(w, http.StatusNotFound, "URL was deleted")
+		case out == waitPrivate:
+			writeError(w, http.StatusForbidden, "URL is private")
 		case out == waitShutdown:
 			writeError(w, http.StatusServiceUnavailable, "server is restarting, please retry")
 		case out == waitResync:
@@ -115,7 +118,8 @@ func (s *Server) firstMatch(ctx context.Context, tokenID string, since time.Time
 }
 
 // nextMatch follows the URL's live events until a matching request arrives.
-func (s *Server) nextMatch(ctx context.Context, events <-chan []byte, tokenID string, since time.Time, m *matcher, expired <-chan time.Time) (*store.Request, waitOutcome, error) {
+func (s *Server) nextMatch(r *http.Request, events <-chan []byte, tokenID string, since time.Time, m *matcher, expired <-chan time.Time) (*store.Request, waitOutcome, error) {
+	ctx := r.Context()
 	for {
 		select {
 		case <-ctx.Done():
@@ -135,6 +139,13 @@ func (s *Server) nextMatch(ctx context.Context, events <-chan []byte, tokenID st
 			switch ev.Type {
 			case "token.deleted":
 				return nil, waitGone, nil
+			case "token.claimed", "token.released":
+				// Who may watch the URL just changed: checked again, as the
+				// stream does, so an anonymous caller does not keep a URL
+				// that is private now. The new owner's own wait goes on.
+				if !s.streamAllowed(r, tokenID) {
+					return nil, waitPrivate, nil
+				}
 			case "resync":
 				return nil, waitResync, nil
 			case "request.created":

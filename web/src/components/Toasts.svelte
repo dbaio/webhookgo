@@ -25,6 +25,17 @@
     <div class="toast {t.kind}" animate:flip={{ duration: 180 }} in:fly={{ y: 16, duration: 200 }} out:fly={{ y: 8, duration: 150 }}>
       {#if t.kind === 'success'}<CircleCheck size={16} />{:else if t.kind === 'error'}<CircleAlert size={16} />{:else}<Info size={16} />{/if}
       <span>{t.message}</span>
+      {#if t.action}
+        {@const action = t.action}
+        <button
+          type="button"
+          class="btn xs action"
+          onclick={() => {
+            app.dismiss(t.id);
+            action.run();
+          }}>{action.label}</button
+        >
+      {/if}
       <button type="button" class="btn ghost icon xs" aria-label="Dismiss" onclick={() => app.dismiss(t.id)}><X /></button>
     </div>
   {/each}
@@ -66,6 +77,10 @@
   .toast span {
     flex: 1;
     overflow-wrap: anywhere;
+  }
+  .action {
+    flex: none;
+    margin: -2px 0;
   }
   .success > :global(svg) {
     color: var(--success);
