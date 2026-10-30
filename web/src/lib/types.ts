@@ -43,6 +43,21 @@ export interface RedeemInput {
   password: string;
 }
 
+/** An API key as listed; the key itself is sent once, on creation. */
+export interface ApiKey {
+  id: string;
+  name: string;
+  /** The first characters after `wgo_`, to tell keys apart. */
+  prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+export interface NewApiKey extends ApiKey {
+  /** The full key, shown this once. */
+  key: string;
+}
+
 export interface KV {
   name: string;
   value: string;

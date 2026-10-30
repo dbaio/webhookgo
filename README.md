@@ -365,12 +365,38 @@ then on.
 For a private instance, set `ANONYMOUS_URLS=off`: creating a URL then needs
 a sign-in. URLs that already exist keep working.
 
+### API keys
+
+Scripts and CI jobs use an API key instead of a session. **Account → API
+keys** makes one, named after where it will be used, and shows it once; the
+app keeps only its hash. Send it as `Api-Key: wgo_…` or
+`Authorization: Bearer wgo_…` on the `/token…` routes: `POST /token` then
+creates a private URL that belongs to you, `GET /token` lists your URLs, and
+everything under `/token/<token>` works on the URLs you own. A CI job that
+creates a URL, points a service at it and waits for the call:
+
+```sh
+ID=$(curl -s -X POST -H "Api-Key: $KEY" "$BASE/token" -d '{"description":"CI run 42"}' | jq -r .uuid)
+# ... trigger the webhook at $BASE/$ID ...
+curl -s -H "Api-Key: $KEY" "$BASE/token/$ID/wait?timeout=30" | jq .
+curl -s -X DELETE -H "Api-Key: $KEY" "$BASE/token/$ID"
+```
+
+A key acts as its user with the plain **user** role, even for an admin, so a
+leaked key never opens other people's URLs; and it never works on the
+`/api/…` routes, so it cannot manage the account, make keys or reach the
+admin side. A bad or revoked key gets `401`, never anonymous access. Each
+account may hold 20 keys; **Revoke** ends one at once, open live streams
+included. Keys start with `wgo_`, so a secret scanner can spot one that
+leaked into a repository.
+
 ### What is stored
 
 In Postgres: each user's email, name, role, password (as an argon2id hash),
 when it was created and last signed in; each session's hash, IP address,
 user agent and times, kept until it expires after `SESSION_TTL` without use;
-the hashes of unused links; and the settings of each private URL, with its
+the hashes of unused links; each API key's name, first characters, hash and
+when it was last used; and the settings of each private URL, with its
 owner. Secrets themselves are never stored.
 Captured requests stay in Redis, as before, and the session cookie is
 stripped from every captured request before it is recorded, since the UI
@@ -510,10 +536,15 @@ stays public).
 | `POST` | `/api/login`, `/api/logout` | Sign in with `{"email", "password"}` (sets the session cookie) and out. [Accounts](#accounts) only. |
 | `POST` | `/api/links/inspect`, `/api/links/redeem` | Look at and use a one-time link: `{"token"}`, plus `email`, `name` and `password` as the link's kind needs. Accounts only. |
 | `PATCH` / `POST` | `/api/account`, `/api/account/password`, `/api/account/logout-others` | Rename (`{"name"}`), change the password (`{"current_password", "new_password"}`), end the other sessions. Accounts only. |
+| `GET` / `POST` | `/api/keys` | List the signed-in user's [API keys](#api-keys), or make one: `{"name"}`; the answer carries the `key` this once. Session only. |
+| `DELETE` | `/api/keys/<id>` | Revoke a key. Session only. |
 
-With accounts on, the `/api/…` and `/token…` routes refuse state-changing
-requests that browsers mark as coming from another site. Requests from
-scripts, which carry no `Origin` or `Sec-Fetch-Site` header, are not affected.
+With accounts on, the `/token…` routes also take an API key, as `Api-Key:
+wgo_…` or `Authorization: Bearer wgo_…`, in place of the session; a session
+cookie wins when both are present. The `/api/…` and `/token…` routes refuse
+state-changing requests that browsers mark as coming from another site.
+Requests from scripts, which carry no `Origin` or `Sec-Fetch-Site` header,
+are not affected.
 
 ```sh
 URL=$(curl -s -X POST localhost:8080/token -H 'Content-Type: application/json' \

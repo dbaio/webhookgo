@@ -9,6 +9,7 @@
   import { api, ApiError } from './lib/api';
   import { app } from './lib/state.svelte';
   import AccountShell from './components/AccountShell.svelte';
+  import ApiKeys from './components/ApiKeys.svelte';
   import FormError from './components/FormError.svelte';
   import Notice from './components/Notice.svelte';
 
@@ -189,6 +190,8 @@
         </div>
         <FormError message={sessionError} />
       </section>
+
+      <ApiKeys />
     </div>
   {:else}
     <Notice icon={LogIn} tone="accent" title="You're signed out">

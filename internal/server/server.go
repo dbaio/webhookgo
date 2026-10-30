@@ -94,14 +94,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/account", s.withAccounts(s.updateAccount))
 	mux.HandleFunc("POST /api/account/password", s.withAccounts(s.changePassword))
 	mux.HandleFunc("POST /api/account/logout-others", s.withAccounts(s.logoutOthers))
+	mux.HandleFunc("GET /api/keys", s.withAccounts(s.listKeys))
+	mux.HandleFunc("POST /api/keys", s.withAccounts(s.createKey))
+	mux.HandleFunc("DELETE /api/keys/{key}", s.withAccounts(s.revokeKey))
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.Handle("GET /", s.ui)
 
 	// With accounts on, the API also refuses cross-origin writes and knows
-	// who is signed in. Captures never go through either.
+	// who is signed in, by session or (on /token routes) by API key.
+	// Captures never go through any of it.
 	var api http.Handler = mux
 	if s.accounts != nil {
-		api = s.crossOrigin().Handler(s.authenticate(mux))
+		api = s.crossOrigin().Handler(s.authenticate(s.authenticateKey(mux)))
 	}
 
 	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

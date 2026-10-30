@@ -1,4 +1,17 @@
-import type { AppConfig, FullRequest, LinkInfo, Page, RedeemInput, Summary, Token, TokenInput, TokenItem, User } from './types';
+import type {
+  ApiKey,
+  AppConfig,
+  FullRequest,
+  LinkInfo,
+  NewApiKey,
+  Page,
+  RedeemInput,
+  Summary,
+  Token,
+  TokenInput,
+  TokenItem,
+  User,
+} from './types';
 
 export class ApiError extends Error {
   constructor(
@@ -83,6 +96,11 @@ export const api = {
   },
   claimToken: (id: string, claimKey: string) => call<Token>('POST', `/token/${id}/claim`, { claim_key: claimKey }),
   releaseToken: (id: string) => call<Token>('POST', `/token/${id}/release`),
+
+  // API keys (accounts on, session only)
+  listKeys: () => call<{ data: ApiKey[] }>('GET', '/api/keys').then((r) => r.data),
+  createKey: (name: string) => call<NewApiKey>('POST', '/api/keys', { name }),
+  revokeKey: (id: string) => call<void>('DELETE', `/api/keys/${id}`),
 };
 
 export const isUUID = (s: string | undefined): s is string =>

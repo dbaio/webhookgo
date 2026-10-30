@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dbaio/webhookgo/internal/accounts"
+	"github.com/dbaio/webhookgo/internal/auth"
 )
 
 const (
@@ -85,9 +86,10 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 
 // streamAllowed re-checks, while a stream is open, that its viewer may still
 // watch the URL: their session is still valid and they are not disabled, and
-// the URL still exists and is public, theirs, or they are an admin. It costs
-// one session lookup and one token read. An error counts as a failure: the
-// browser reconnects and goes through loadToken, which answers properly.
+// the URL still exists and is public, theirs, or they are an admin. A viewer
+// that came with an API key must still hold a valid one. It costs one session
+// or key lookup and one token read. An error counts as a failure: the client
+// reconnects and goes through loadToken, which answers properly.
 func (s *Server) streamAllowed(r *http.Request, id string) bool {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -96,6 +98,12 @@ func (s *Server) streamAllowed(r *http.Request, id string) bool {
 		var err error
 		if u, err = s.accounts.SessionUser(ctx, secret, s.cfg.SessionTTL); err != nil && !errors.Is(err, accounts.ErrNotFound) {
 			return false
+		}
+	}
+	if key := auth.APIKey(r); u == nil && key != "" {
+		var err error
+		if u, err = s.keyUser(ctx, key); err != nil {
+			return false // revoked, or the user is disabled: like the 401 it would get now
 		}
 	}
 	t, err := s.tokens.read(ctx, id)
