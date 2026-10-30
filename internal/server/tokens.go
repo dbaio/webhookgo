@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -172,9 +173,22 @@ func claimHash(key string) string { return hex.EncodeToString(auth.HashSecret(ke
 
 func isAdmin(u *accounts.User) bool { return u != nil && u.Role == accounts.RoleAdmin }
 
-// noteAdminAccess is called when an admin opens a URL that belongs to
-// someone else. The admin log (a later commit) records it here.
-func (s *Server) noteAdminAccess(r *http.Request, u *accounts.User, t *store.Token) {}
+// noteAdminAccess logs url.view when an admin opens a URL that belongs to
+// someone else, once an hour per admin and URL. A failure is only logged:
+// it does not refuse the view.
+func (s *Server) noteAdminAccess(r *http.Request, u *accounts.User, t *store.Token) {
+	first, err := s.store.NoteAdminView(r.Context(), u.ID, t.ID)
+	if err == nil && first {
+		details := map[string]any{"owner_id": t.OwnerID}
+		if owner, err := s.accounts.UserByID(r.Context(), t.OwnerID); err == nil {
+			details["owner_email"] = owner.Email
+		}
+		err = s.logAdmin(r, accounts.ActionURLView, accounts.TargetURL, t.ID, details)
+	}
+	if err != nil {
+		slog.Warn("admin view not logged", "admin", u.ID, "url", t.ID, "err", err)
+	}
+}
 
 // tooManyURLs answers the owner's limit.
 func (s *Server) tooManyURLs(w http.ResponseWriter) {

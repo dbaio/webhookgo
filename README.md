@@ -342,6 +342,40 @@ Signed in, **Account** in the top-right menu lets you change your name and
 password, and sign out of your other devices. Changing the password ends
 every other session.
 
+### Admin panel
+
+Admins also have **Admin** in that menu, at `/admin`:
+
+- **Overview**: how many users, admins and disabled accounts there are and
+  how many private URLs; Redis memory (used against `maxmemory`) and evicted
+  keys; the database size; the version.
+- **Users**: search; invite (the link is shown once, valid 72 hours); make
+  someone an admin or a user; disable (their sessions end and they cannot
+  sign in until enabled again); hand out a password reset link; delete an
+  account together with its private URLs. The last active admin cannot be
+  demoted, disabled or deleted, and admins cannot do any of these to their
+  own account.
+- **URLs**: every private URL with its owner and activity, and a lookup that
+  takes any URL or UUID, anonymous or not, and shows what the instance knows
+  about it, including the record `webhookgo audit` prints, with a delete
+  button.
+- **Log**: every admin action, with who did it, from where and when. That
+  includes opening someone else's private URL (noted once an hour per URL),
+  links made from the command line, and the creation of the first admin.
+  The log is only ever appended to.
+
+The panel runs on its own JSON API, open only to admins signed in with a
+session (an API key never reaches it):
+
+| Method | Path | |
+| --- | --- | --- |
+| `GET` | `/api/admin/stats`, `/api/admin/log` | Instance numbers; the admin log (`page`, `per_page`, `action`, `actor`). |
+| `GET` / `POST` | `/api/admin/users` | List accounts (`q`, `page`, `per_page`); invite one: `{"email", "role"}` → `{"link", "expires_at"}`. |
+| `PATCH` / `DELETE` | `/api/admin/users/<id>` | Change the role (`{"role"}`) or disable (`{"disabled"}`); delete the account and its URLs. |
+| `POST` | `/api/admin/users/<id>/reset` | A password reset link: `{"link", "expires_at"}`. |
+| `GET` | `/api/admin/urls` | Every private URL with its owner (`q`, `owner`, `page`, `per_page`). |
+| `GET` / `DELETE` | `/api/admin/urls/<id>` | What is known about any UUID: `{"token", "owner", "record"}`; delete the URL. |
+
 ### Private URLs
 
 A URL created while signed in is private: only its owner and the admins can

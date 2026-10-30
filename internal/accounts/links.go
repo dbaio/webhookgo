@@ -106,6 +106,9 @@ func (s *Store) Redeem(ctx context.Context, token string, in Redeem) (*User, str
 				return ErrNotFound
 			}
 			u, err = insertUser(ctx, tx, in.Email, in.Name, in.PasswordHash, RoleAdmin)
+			if err == nil {
+				err = logEntry(ctx, tx, NewLogEntry{ActorEmail: ActorSetup, Action: ActionSetup, TargetType: TargetUser, TargetID: u.ID, Details: map[string]any{"email": u.Email}, IP: in.IP})
+			}
 		case LinkInvite:
 			u, err = insertUser(ctx, tx, l.Email, in.Name, in.PasswordHash, l.Role)
 		case LinkReset:

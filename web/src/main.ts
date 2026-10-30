@@ -2,6 +2,7 @@ import { mount, type Component } from 'svelte';
 import './app.css';
 import Abuse from './Abuse.svelte';
 import Account from './Account.svelte';
+import Admin from './Admin.svelte';
 import App from './App.svelte';
 import Login from './Login.svelte';
 import Redeem from './Redeem.svelte';
@@ -14,6 +15,7 @@ const pages: Record<string, Component> = {
   '/invite': Redeem,
   '/reset': Redeem,
   '/account': Account,
+  '/admin': Admin,
 };
 const page = pages[location.pathname] ?? App;
 

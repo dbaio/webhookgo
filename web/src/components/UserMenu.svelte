@@ -3,6 +3,7 @@
   // with a menu. Nothing shows until the server has said who is signed in.
   import LogIn from '@lucide/svelte/icons/log-in';
   import LogOut from '@lucide/svelte/icons/log-out';
+  import ShieldCheck from '@lucide/svelte/icons/shield-check';
   import UserRound from '@lucide/svelte/icons/user-round';
   import { initials, roleLabel } from '../lib/account';
   import { app } from '../lib/state.svelte';
@@ -25,6 +26,7 @@
         </div>
         <div class="menu-sep"></div>
         <a class="menu-item" href="/account" onclick={close}><UserRound /> <span class="grow">Account</span></a>
+        {#if u.role === 'admin'}<a class="menu-item" href="/admin" onclick={close}><ShieldCheck /> <span class="grow">Admin</span></a>{/if}
         <button
           type="button"
           class="menu-item"

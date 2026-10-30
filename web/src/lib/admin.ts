@@ -1,0 +1,154 @@
+// The admin panel's API (/api/admin/*, admins with a session only) and its types.
+import { ApiError } from './api';
+import { app } from './state.svelte';
+import type { Page, Role, Token, User } from './types';
+
+export interface AdminStats {
+  users: { total: number; admins: number; disabled: number };
+  urls: { owned: number };
+  /** From Redis INFO. maxmemory 0 = no limit. */
+  redis: { used_memory: number; maxmemory: number; evicted_keys: number };
+  database: { size_bytes: number };
+  version: string;
+}
+
+export interface AdminUser extends User {
+  disabled_at: string | null;
+  url_count: number;
+}
+
+/** A one-time link: an invitation or a password reset. */
+export interface AdminLink {
+  link: string;
+  expires_at: string;
+}
+
+export interface Owner {
+  id: string;
+  email: string;
+}
+
+/** An owned URL in the admin list. */
+export interface AdminUrl extends Token {
+  owner: Owner;
+  latest_request_at: string | null;
+}
+
+/** What is kept about a URL (wh:{id}:audit), as `webhookgo audit` prints it. */
+export interface AuditRecord {
+  uuid: string;
+  status: 'live' | 'expired' | 'deleted' | string;
+  created_at?: string;
+  ip?: string;
+  user_agent?: string;
+  requests: number;
+  first_request_at?: string;
+  last_request_at?: string;
+  deleted_at?: string;
+  deleted_ip?: string;
+  deleted_user_agent?: string;
+  kept_until?: string;
+}
+
+/** Any UUID looked up: a live URL, a record of a gone one, both or neither. */
+export interface UrlLookup {
+  token: Token | null;
+  owner: Owner | null;
+  record: AuditRecord | null;
+}
+
+export interface LogEntry {
+  id: string;
+  actor_id: string | null;
+  /** A copy of the actor's address; "cli" for the command line, "setup" for the first admin. */
+  actor_email: string;
+  action: string;
+  target_type: 'user' | 'url' | 'link' | string;
+  target_id: string;
+  details: Record<string, unknown> | null;
+  ip: string | null;
+  created_at: string;
+}
+
+/** The actions the log filter offers. */
+export const LOG_ACTIONS = [
+  'user.invite',
+  'user.role',
+  'user.disable',
+  'user.enable',
+  'user.reset_link',
+  'user.delete',
+  'url.view',
+  'url.delete',
+  'setup',
+  'cli.invite',
+  'cli.reset',
+];
+
+export const ADMIN_PATH = '/admin';
+export const LOGIN_FOR_ADMIN = `/login?next=${encodeURIComponent(ADMIN_PATH)}`;
+
+/** The first UUID in a bare ID or in any text holding one (a webhook URL, a viewer link). */
+export function findUUID(text: string): string {
+  return text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0].toLowerCase() ?? '';
+}
+
+async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method,
+      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    throw new ApiError(0, 'Network error — is the server running?');
+  }
+  // Refused: the session ended (signed out elsewhere, disabled) or is no
+  // longer an admin's. Ask who is signed in: the page then sends a signed-out
+  // viewer to sign in, and shows "Admins only" to anyone else.
+  if (res.status === 401 || res.status === 403) app.loadUser().catch(() => {});
+  if (res.status === 204) return undefined as T;
+  const text = await res.text();
+  let data: unknown = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    /* not JSON */
+  }
+  if (!res.ok) throw new ApiError(res.status, (data as { error?: string } | null)?.error ?? `HTTP ${res.status}`, data);
+  return data as T;
+}
+
+const query = (params: Record<string, string | number | undefined>) => {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') p.set(k, String(v));
+  const s = p.toString();
+  return s ? `?${s}` : '';
+};
+
+export interface AdminListParams {
+  page?: number;
+  perPage?: number;
+  q?: string;
+}
+
+export const adminApi = {
+  stats: () => call<AdminStats>('GET', '/api/admin/stats'),
+
+  listUsers: ({ page = 1, perPage = 25, q = '' }: AdminListParams = {}) =>
+    call<Page<AdminUser>>('GET', `/api/admin/users${query({ q, page, per_page: perPage })}`),
+  invite: (email: string, role: Role) => call<AdminLink>('POST', '/api/admin/users', { email, role }),
+  updateUser: (id: string, change: { role?: Role; disabled?: boolean }) =>
+    call<AdminUser>('PATCH', `/api/admin/users/${id}`, change),
+  resetLink: (id: string) => call<AdminLink>('POST', `/api/admin/users/${id}/reset`),
+  deleteUser: (id: string) => call<void>('DELETE', `/api/admin/users/${id}`),
+
+  listUrls: ({ page = 1, perPage = 25, q = '', owner = '' }: AdminListParams & { owner?: string } = {}) =>
+    call<Page<AdminUrl>>('GET', `/api/admin/urls${query({ q, owner, page, per_page: perPage })}`),
+  lookupUrl: (id: string) => call<UrlLookup>('GET', `/api/admin/urls/${id}`),
+  deleteUrl: (id: string) => call<void>('DELETE', `/api/admin/urls/${id}`),
+
+  log: ({ page = 1, perPage = 50, action = '', actor = '' }: Omit<AdminListParams, 'q'> & { action?: string; actor?: string } = {}) =>
+    call<Page<LogEntry>>('GET', `/api/admin/log${query({ action, actor, page, per_page: perPage })}`),
+};

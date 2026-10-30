@@ -54,7 +54,7 @@ func New(cfg config.Config, st *store.Store, acc *accounts.Store, h *hub.Hub, ui
 		heavy:    make(chan struct{}, maxHeavy),
 	}
 	if acc != nil {
-		for _, p := range []string{"/login", "/setup", "/invite", "/reset", "/account"} {
+		for _, p := range []string{"/login", "/setup", "/invite", "/reset", "/account", "/admin"} {
 			files.pages[p] = true
 		}
 		s.streamRecheck = streamRecheckEvery
@@ -98,6 +98,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/keys", s.withAccounts(s.createKey))
 	mux.HandleFunc("DELETE /api/keys/{key}", s.withAccounts(s.revokeKey))
 	mux.HandleFunc("GET /healthz", s.health)
+	mux.HandleFunc("GET /api/admin/stats", s.admin(s.adminStats))
+	mux.HandleFunc("GET /api/admin/users", s.admin(s.adminListUsers))
+	mux.HandleFunc("POST /api/admin/users", s.admin(s.adminInvite))
+	mux.HandleFunc("PATCH /api/admin/users/{id}", s.admin(s.adminUpdateUser))
+	mux.HandleFunc("POST /api/admin/users/{id}/reset", s.admin(s.adminResetLink))
+	mux.HandleFunc("DELETE /api/admin/users/{id}", s.admin(s.adminDeleteUser))
+	mux.HandleFunc("GET /api/admin/urls", s.admin(s.adminListURLs))
+	mux.HandleFunc("GET /api/admin/urls/{id}", s.admin(s.adminLookupURL))
+	mux.HandleFunc("DELETE /api/admin/urls/{id}", s.admin(s.adminDeleteURL))
+	mux.HandleFunc("GET /api/admin/log", s.admin(s.adminLog))
 	mux.Handle("GET /", s.ui)
 
 	// With accounts on, the API also refuses cross-origin writes and knows

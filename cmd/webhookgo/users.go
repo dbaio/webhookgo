@@ -96,6 +96,9 @@ func usersAdd(ctx context.Context, cfg config.Config, acc *accounts.Store, args 
 	if err != nil {
 		return err
 	}
+	if err := acc.Log(ctx, accounts.NewLogEntry{ActorEmail: accounts.ActorCLI, Action: accounts.ActionCLIInvite, TargetType: accounts.TargetLink, TargetID: email, Details: map[string]any{"email": email, "role": role}}); err != nil {
+		return err
+	}
 	fmt.Printf("invite for %s (%s): %s (valid 72h)\n", email, role, linkText(cfg.PublicURL, "/invite", token))
 	return nil
 }
@@ -113,6 +116,9 @@ func usersReset(ctx context.Context, cfg config.Config, acc *accounts.Store, arg
 	}
 	token, err := acc.CreateLink(ctx, accounts.NewLink{Kind: accounts.LinkReset, UserID: u.ID, TTL: inviteLinkTTL})
 	if err != nil {
+		return err
+	}
+	if err := acc.Log(ctx, accounts.NewLogEntry{ActorEmail: accounts.ActorCLI, Action: accounts.ActionCLIReset, TargetType: accounts.TargetUser, TargetID: u.ID, Details: map[string]any{"email": u.Email}}); err != nil {
 		return err
 	}
 	fmt.Printf("password reset for %s: %s (valid 72h)\n", u.Email, linkText(cfg.PublicURL, "/reset", token))

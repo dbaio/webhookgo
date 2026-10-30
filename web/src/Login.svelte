@@ -9,9 +9,9 @@
   import AuthCard from './components/AuthCard.svelte';
   import Notice from './components/Notice.svelte';
 
-  // Back to the private URL that asked for a sign-in, else home.
+  // Back to the private URL or the admin panel that asked for a sign-in, else home.
   const next = new URLSearchParams(location.search).get('next') ?? undefined;
-  const home = isUUID(next) ? `/#/${next.toLowerCase()}` : '/';
+  const home = isUUID(next) ? `/#/${next.toLowerCase()}` : next === '/admin' ? next : '/';
 
   let email = $state('');
   let password = $state('');
