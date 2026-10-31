@@ -1,6 +1,5 @@
 <script lang="ts">
   import Forward from '@lucide/svelte/icons/forward';
-  import Lock from '@lucide/svelte/icons/lock';
   import Plus from '@lucide/svelte/icons/plus';
   import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
   import Star from '@lucide/svelte/icons/star';
@@ -9,8 +8,8 @@
   import { app } from '../lib/state.svelte';
   import CopyButton from './CopyButton.svelte';
   import GitHubMark from './GitHubMark.svelte';
-  import HistoryMenu from './HistoryMenu.svelte';
   import PrefsMenu from './PrefsMenu.svelte';
+  import UrlMenu from './UrlMenu.svelte';
   import UserMenu from './UserMenu.svelte';
 
   let creating = $state(false);
@@ -23,10 +22,6 @@
     creating = false;
     if (t) app.toast(t.owner_id ? 'New private URL created — only you and the admins can see it' : 'New URL created — the previous one is in your history', 'success');
   }
-
-  const privateTitle = $derived(
-    `Only ${app.token?.owner_id === app.user?.id ? 'you' : 'its owner'} and the admins can see it. It doesn't expire.`,
-  );
 
   const liveTitle = $derived(
     {
@@ -47,7 +42,7 @@
   {#if app.token}
     <div class="url" title={liveTitle}>
       <span class="live-dot {app.live}"></span>
-      {#if app.token.owner_id}<span class="private" title={privateTitle}><Lock /><span>Private</span></span>{/if}
+      <UrlMenu />
       {#if app.token.description}<span class="desc">{app.token.description}</span>{/if}
       <input
         class="mono"
@@ -74,7 +69,7 @@
       <GitHubMark />
       {#if stats}<span class="stars"><Star />{count(stats.stars)}</span>{:else}<span class="label">GitHub</span>{/if}
     </a>
-    <HistoryMenu />
+    {#if !app.token}<UrlMenu />{/if}
     <PrefsMenu />
     {#if app.canCreate}
       <button type="button" class="btn sm new" disabled={creating} title="Create a new URL (n)" onclick={newUrl}>
@@ -152,25 +147,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .private {
-    display: inline-flex;
-    flex: none;
-    align-items: center;
-    gap: 4px;
-    height: 22px;
-    padding: 0 7px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background: var(--bg-elev);
-    color: var(--text-2);
-    font-size: 12px;
-    font-weight: 600;
-    cursor: default;
-  }
-  .private :global(svg) {
-    width: 12px;
-    height: 12px;
-  }
   .url input {
     flex: 1;
     min-width: 0;
@@ -216,12 +192,8 @@
   }
   @media (max-width: 899px) {
     .name,
-    .desc,
-    .private span {
+    .desc {
       display: none;
-    }
-    .private {
-      padding: 0 5px;
     }
     .topbar {
       gap: 8px;

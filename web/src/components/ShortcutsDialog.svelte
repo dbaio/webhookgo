@@ -5,7 +5,7 @@
 
   const groups: [string, [string[], string][]][] = [
     ['Requests', [[['j', '↓'], 'Older request'], [['k', '↑'], 'Newer request'], [['d', 'Del'], 'Delete the selected request'], [['f'], 'Forward the selected request'], [['Esc'], 'Back to the list (mobile) / close']]],
-    ['URL', [[['c'], 'Copy the webhook URL'], [['n'], 'Create a new URL'], [['s'], 'Response settings'], [['/'], 'Search requests']]],
+    ['URL', [[['c'], 'Copy the webhook URL'], [['n'], 'Create a new URL'], [['h'], 'Your URLs'], [['s'], 'Response settings'], [['/'], 'Search requests']]],
     ['App', [[['t'], 'Toggle light / dark theme'], [['u'], 'Toggle local time / UTC'], [['?'], 'Show this help']]],
   ];
 </script>

@@ -10,8 +10,10 @@
     title?: string;
     align?: 'start' | 'end';
     width?: number;
+    /** The trigger's id, to open the menu from elsewhere (a shortcut). */
+    id?: string;
   }
-  let { button, children, class: cls = 'btn', title, align = 'end', width }: Props = $props();
+  let { button, children, class: cls = 'btn', title, align = 'end', width, id: triggerId }: Props = $props();
 
   const id = `menu-${Math.random().toString(36).slice(2, 9)}`;
   let trigger = $state<HTMLButtonElement>();
@@ -42,7 +44,7 @@
   const close = () => pop?.hidePopover();
 </script>
 
-<button bind:this={trigger} type="button" class={cls} {title} aria-label={title} popovertarget={id} aria-expanded={open}>
+<button bind:this={trigger} id={triggerId} type="button" class={cls} {title} aria-label={title} popovertarget={id} aria-expanded={open}>
   {@render button()}
 </button>
 <div bind:this={pop} {id} popover="auto" class="menu" style:width={width ? `${width}px` : undefined} {onbeforetoggle}>

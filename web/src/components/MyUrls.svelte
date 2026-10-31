@@ -33,7 +33,7 @@
 
   async function load(reset: boolean) {
     const n = ++seq;
-    // Derive the page from what is loaded, as the history menu does.
+    // Derive the page from what is loaded, as the URL menu does.
     const page = reset ? 1 : Math.floor(items.length / PER_PAGE) + 1;
     loading = true;
     error = '';
@@ -97,7 +97,7 @@
     <div class="grow">
       <h2 id="account-urls">Your URLs</h2>
       <p class="hint">
-        Private: only you and the admins can open them. They don't expire; their requests do, as on any URL. Also in the history menu, on
+        Private: only you and the admins can open them. They don't expire; their requests do, as on any URL. Also in the URL menu, on
         any browser.
       </p>
     </div>

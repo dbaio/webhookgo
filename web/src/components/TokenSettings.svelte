@@ -298,7 +298,7 @@
             <span class="hint">
               Only {mine ? 'you' : 'its owner'} and the admins can see it, and it doesn't expire. Made anonymous, it leaves
               {mine ? 'your' : "its owner's"} account: anyone with the URL can see it, and it expires after
-              {duration(app.config.token_ttl)} without use. This browser can save it back to {mine ? 'your' : 'an'} account from the history menu.
+              {duration(app.config.token_ttl)} without use. This browser can save it back to {mine ? 'your' : 'an'} account from the URL menu.
             </span>
           </div>
           <div>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The signed-in user's URLs in the history menu, from the server: newest
+  // The signed-in user's URLs in the URL menu, from the server: newest
   // first, a search on their names and more on demand. It loads each time the
   // menu opens, and again when `version` changes.
   import Check from '@lucide/svelte/icons/check';

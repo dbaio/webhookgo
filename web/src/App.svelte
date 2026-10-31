@@ -75,6 +75,7 @@
       c: async () => app.toast((await copyText(app.webhookUrl)) ? 'URL copied to clipboard' : 'Copy failed', 'success', 1800),
       n: () => app.createToken(),
       s: () => (app.dialog = 'settings'),
+      h: () => document.getElementById('url-menu')?.click(),
       '/': () => document.getElementById('search')?.focus(),
       t: () => {
         const dark = matchMedia('(prefers-color-scheme: dark)').matches;

@@ -88,7 +88,7 @@ every `docker compose up -d`. To stay on a release, use a version tag such as
 - **Forwarding** from the browser to any target — including `http://localhost` on your machine — on demand or automatically for each new request.
 - **Search** across bodies, headers, query strings and IPs; filter by method.
 - **Wait for a webhook** from scripts and end-to-end tests: one API call returns as soon as a matching request arrives.
-- **Responsive UI** with light/dark themes, keyboard shortcuts (`?`), desktop notifications, unread markers and a history of your URLs.
+- **Responsive UI** with light/dark themes, keyboard shortcuts (`?`), desktop notifications, unread markers, and a menu of your URLs at the start of the URL bar (`h`).
 - **Abuse handling**: an `/abuse` page where anyone can look up and delete reported URLs, with records kept for investigations.
 - **Accounts** (optional): sign in with an email and password, invite people with one-time links, no SMTP needed. Off by default; see [Accounts](#accounts).
 - **Safe defaults**: per-IP rate limits, body and per-URL storage caps, custom responses sandboxed with CSP, strict CSP on the app, distroless non-root read-only container (~12 MB image).
