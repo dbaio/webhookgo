@@ -38,6 +38,7 @@ Server-Sent Events. No PHP, no Node at runtime, no socket.io server.
 - [Configuration](#configuration)
 - [Hosting](#hosting): Cloudflare Tunnel, ngrok, Caddy, nginx
 - [Accounts](#accounts): optional sign-in, backed by Postgres
+- [Privacy](#privacy): what is kept, who sees it, for how long
 - [Abuse handling](#abuse-handling)
 - [Signature verification](#signature-verification)
 - [API](#api)
@@ -484,6 +485,32 @@ DATABASE_URL=postgres://webhookgo:secret@db.example.com/webhookgo?sslmode=requir
 A password with special characters is easier to pass through the standard
 `PGHOST`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` and `PGSSLMODE` variables
 instead, which the app reads when `DATABASE_URL` is empty.
+
+## Privacy
+
+What an instance keeps, who sees it and for how long. Each instance also
+shows this at `/privacy` (in the menu), written from its own settings.
+
+- **Captured requests** hold whatever the sender sent and its IP address, up
+  to `MAX_REQUESTS` per URL, and go `TOKEN_TTL` after the URL was last used,
+  or at once when it is deleted.
+- **Anonymous URLs** are public: whoever has the link sees and changes them.
+  [Private URLs](#private-urls) are for their owner and the admins.
+- **Who created a URL** (IP address and user agent) is kept with it. For an
+  anonymous URL, the abuse page shows it to anyone who looks the URL up
+  there, so that abuse can be reported to the network it came from.
+  Otherwise only the URL's owner and the admins see it: the API leaves `ip`
+  and `user_agent` empty for anyone else.
+- **Records** for [abuse investigations](#abuse-handling) last
+  `AUDIT_RETENTION` after the URL is gone, and hold no request content.
+- **Admins** can list and open every URL to look for abuse. Opening one that
+  is not theirs goes into the admin log, which cannot be edited and which
+  every admin sees, so keep the admins few.
+- **Accounts** keep what [What is stored](#what-is-stored) lists. Expired
+  sessions, and links nobody used in time, are deleted every hour. **Abuse
+  reports** keep the reporter's IP address, message and contact.
+- **No analytics or third-party scripts**: the UI's Content Security Policy
+  loads nothing from anywhere else.
 
 ## Abuse handling
 

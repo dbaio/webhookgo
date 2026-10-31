@@ -81,6 +81,7 @@ func run() error {
 		if err := acc.Migrate(ctx); err != nil {
 			return err
 		}
+		go deleteExpired(ctx, acc)
 		if err := bootstrapAdmin(ctx, cfg, acc); err != nil {
 			return err
 		}

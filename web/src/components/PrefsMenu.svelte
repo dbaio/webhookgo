@@ -7,6 +7,7 @@
   import Monitor from '@lucide/svelte/icons/monitor';
   import Moon from '@lucide/svelte/icons/moon';
   import ShieldAlert from '@lucide/svelte/icons/shield-alert';
+  import ShieldCheck from '@lucide/svelte/icons/shield-check';
   import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
   import Star from '@lucide/svelte/icons/star';
   import Sun from '@lucide/svelte/icons/sun';
@@ -70,6 +71,7 @@
     <a class="menu-item" href={FORK_URL} target="_blank" rel="noopener" onclick={close}><GitFork /> <span class="grow">Fork on GitHub</span></a>
     <a class="menu-item" href={ISSUES_URL} target="_blank" rel="noopener" onclick={close}><Bug /> <span class="grow">Report an issue</span></a>
     <a class="menu-item" href="/abuse" target="_blank" rel="noopener" onclick={close}><ShieldAlert /> <span class="grow">Report abuse</span></a>
+    <a class="menu-item" href="/privacy" target="_blank" rel="noopener" onclick={close}><ShieldCheck /> <span class="grow">Privacy</span></a>
     {#if app.config.version}<p class="version">{app.config.app_name} {app.config.version}</p>{/if}
   {/snippet}
 </Dropdown>

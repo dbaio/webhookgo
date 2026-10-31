@@ -91,3 +91,21 @@ func (s *Store) DeleteOtherSessions(ctx context.Context, userID, keepSecret stri
 	_, err := s.pool.Exec(ctx, "delete from sessions where user_id = $1 and id_hash <> $2", userID, auth.HashSecret(keepSecret))
 	return err
 }
+
+// DeleteExpired removes the sessions that expired, with their IP address
+// and user agent, and the one-time links nobody used in time, with the
+// address they were meant for. It reports how many rows went.
+func (s *Store) DeleteExpired(ctx context.Context) (int64, error) {
+	var n int64
+	for _, q := range []string{
+		"delete from sessions where expires_at <= now()",
+		"delete from one_time_links where used_at is null and expires_at <= now()",
+	} {
+		tag, err := s.pool.Exec(ctx, q)
+		if err != nil {
+			return n, err
+		}
+		n += tag.RowsAffected()
+	}
+	return n, nil
+}

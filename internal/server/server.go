@@ -46,7 +46,7 @@ func New(cfg config.Config, st *store.Store, acc *accounts.Store, h *hub.Hub, ui
 	if err != nil {
 		return nil, err
 	}
-	files.pages = map[string]bool{"/": true, "/abuse": true}
+	files.pages = map[string]bool{"/": true, "/abuse": true, "/privacy": true}
 	s := &Server{
 		cfg: cfg, store: st, accounts: acc, hub: h, ui: files, version: version,
 		tokens:   &tokens{store: st, accounts: acc, maxURLs: cfg.MaxURLs},
