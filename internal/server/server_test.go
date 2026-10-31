@@ -471,11 +471,30 @@ func TestStaticUI(t *testing.T) {
 		t.Fatalf("asset: %v", resp.Header)
 	}
 	e.json(e.do("GET", "/nope.js", nil), 404, nil)
+	req, _ = http.NewRequest("GET", e.srv.URL+"/abuse/?q=1", nil)
+	resp, err = http.DefaultTransport.RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 301 || resp.Header.Get("Location") != "/abuse?q=1" {
+		t.Fatalf("page with a trailing slash: %d %v", resp.StatusCode, resp.Header)
+	}
+	e.json(e.do("GET", "/admin/", nil), 404, nil) // not a page with accounts off
 	e.json(e.do("GET", "/healthz", nil), 200, nil)
 	var cfg map[string]any
 	e.json(e.do("GET", "/api/config", nil), 200, &cfg)
 	if cfg["max_requests"].(float64) != 500 {
 		t.Fatalf("config: %v", cfg)
+	}
+}
+
+func TestAccountPagesWithTrailingSlash(t *testing.T) {
+	e := setupAccounts(t)
+	for _, p := range []string{"/login", "/account"} {
+		if resp := e.do("GET", p+"/", nil); resp.StatusCode != 200 || resp.Request.URL.Path != p {
+			t.Fatalf("%s/: %d at %s", p, resp.StatusCode, resp.Request.URL.Path)
+		}
 	}
 }
 

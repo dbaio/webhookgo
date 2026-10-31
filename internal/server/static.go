@@ -84,6 +84,14 @@ func compressible(ctype string) bool {
 
 func (sf *staticFiles) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
+	if page := strings.TrimSuffix(p, "/"); page != p && sf.pages[page] {
+		// /admin/ -> /admin: the app picks its page by the exact path.
+		if r.URL.RawQuery != "" {
+			page += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, page, http.StatusMovedPermanently)
+		return
+	}
 	if sf.pages[p] {
 		p = "/index.html"
 	}
