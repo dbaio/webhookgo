@@ -411,9 +411,13 @@ delete button.
 
 Anonymous URLs still work as before, with one addition: with accounts on,
 creating one returns a `claim_key`, once. The app keeps it in the browser's
-history, and after signing in offers to **save** those URLs to the account
+history, and the URL can be **saved** to an account with it
 (`POST /token/<token>/claim` with the key). The key is what keeps someone
-who merely knows a URL's ID from taking it over. In the other direction,
+who merely knows a URL's ID from taking it over. Signing in from the tab
+that created a URL less than an hour before saves it at once, with an undo;
+any other URL on the browser is saved only on request, after a warning, as
+on a shared computer it may be someone else's (whoever else uses it can
+still send requests to it, but no longer see them). In the other direction,
 **Make anonymous** in a private URL's settings (`POST /token/<token>/release`)
 hands it back with a new `claim_key`, and it expires like any other from
 then on.

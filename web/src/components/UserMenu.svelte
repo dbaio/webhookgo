@@ -38,7 +38,10 @@
       {/snippet}
     </Dropdown>
   {:else if app.userLoaded}
-    <a class="btn ghost sm" href="/login" title="Sign in" aria-label="Sign in"><LogIn /> <span class="label">Sign in</span></a>
+    <!-- Back to this URL afterwards: if this tab just made it, signing in saves it to the account. -->
+    <a class="btn ghost sm" href={app.token ? `/login?next=${app.token.uuid}` : '/login'} title="Sign in" aria-label="Sign in"
+      ><LogIn /> <span class="label">Sign in</span></a
+    >
   {/if}
 </div>
 

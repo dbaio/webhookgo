@@ -1,7 +1,7 @@
 import { api, ApiError, isUUID } from './api';
 import { bytes, duration } from './format';
 import { defaultForward, forward, type ForwardResult, type ForwardSettings } from './forward';
-import { read, write } from './storage';
+import { read, readSession, write, writeSession } from './storage';
 import type { AppConfig, FullRequest, LiveEvent, Summary, Token, TokenInput, User } from './types';
 
 export interface Prefs {
@@ -25,6 +25,16 @@ const defaultPrefs: Prefs = {
   sidebarWidth: 340,
   collapsed: {},
 };
+
+// The anonymous URLs this tab created in the last hour: signing in from the
+// tab saves them to the account. Only this tab's, and only recent ones: on a
+// shared computer, the browser's other URLs may be someone else's.
+const MADE_HERE = 'wh:made-here';
+const MADE_HERE_FOR = 60 * 60_000;
+interface Made {
+  id: string;
+  at: number; // ms
+}
 
 export interface HistoryEntry {
   id: string;
@@ -163,7 +173,7 @@ class Store {
     }
     if (this.config.accounts)
       this.#userReady = this.loadUser().then(
-        () => this.#offerClaims(),
+        () => this.#keepMadeHere(),
         () => void (this.userLoaded = true),
       );
     window.addEventListener('hashchange', () => this.route());
@@ -276,6 +286,7 @@ class Store {
     try {
       const t = await api.createToken(input);
       this.#remember(t);
+      if (t.claim_key) this.#madeHere(t.uuid);
       this.go(t.uuid);
       return t;
     } catch (e) {
@@ -791,34 +802,57 @@ class Store {
     location.assign('/');
   }
 
-  // Right after a sign-in (a user this browser didn't see last time), offer
-  // to save the anonymous URLs created here to the account.
-  #offerClaims() {
-    const last = read<string>('wh:user', '');
-    const now = this.user?.id ?? '';
-    if (now !== last) write('wh:user', now);
-    const n = this.claimable.length;
-    if (!now || now === last || !n) return;
+  #madeHere(id: string) {
+    const now = Date.now();
+    const made = readSession<Made[]>(MADE_HERE, []).filter((m) => now - m.at < MADE_HERE_FOR);
+    writeSession(MADE_HERE, [...made, { id, at: now }].slice(-20));
+  }
+
+  // Signed in from this tab: save the URLs it created anonymously in the last
+  // hour to the account, with an undo. Other URLs on this browser are saved
+  // only when asked (the URL menu), as they may be someone else's.
+  async #keepMadeHere() {
+    if (!this.user) return;
+    const now = Date.now();
+    const made = readSession<Made[]>(MADE_HERE, []).filter((m) => now - m.at < MADE_HERE_FOR);
+    writeSession(MADE_HERE, []); // once: an undo must not be redone on the next load
+    const entries = this.claimable.filter((h) => made.some((m) => m.id === h.id));
+    if (!entries.length || this.claiming) return;
+    const { saved, why } = await this.#claimEach(entries);
+    if (!saved.length) {
+      this.toast(`Could not save the URL you made before signing in: ${why}`, 'error');
+      return;
+    }
     const message =
-      n === 1
-        ? "Save the URL you created on this browser to your account? It becomes private and won't expire."
-        : `Save the ${n} URLs you created on this browser to your account? They become private and won't expire.`;
-    this.toast(message, 'info', 15_000, { label: n === 1 ? 'Save it' : 'Save all', run: () => this.claim(this.claimable) });
+      saved.length === 1
+        ? "The URL you made before signing in is saved to your account: it's private now and won't expire."
+        : `The ${saved.length} URLs you made before signing in are saved to your account: they're private now and won't expire.`;
+    this.toast(message, 'success', 10_000, { label: 'Undo', run: () => this.#release(saved) });
   }
 
   /** Saves anonymous URLs from this browser to the signed-in account, one at a time. Returns how many were saved. */
   async claim(entries: HistoryEntry[]): Promise<number> {
     const wanted = entries.filter((h) => h.claim_key);
     if (this.claiming || !wanted.length) return 0;
+    const { saved, why } = await this.#claimEach(wanted);
+    const n = wanted.length;
+    if (saved.length === n) this.toast(n === 1 ? 'URL saved to your account' : `${n} URLs saved to your account`, 'success');
+    else if (saved.length) this.toast(`Saved ${saved.length} of ${n} URLs. The rest: ${why}`, 'error');
+    else this.toast(`Could not save ${n === 1 ? 'the URL' : 'the URLs'}: ${why}`, 'error');
+    return saved.length;
+  }
+
+  // Claims each entry in turn: the IDs saved, and why the others were not.
+  async #claimEach(wanted: HistoryEntry[]): Promise<{ saved: string[]; why: string }> {
     this.claiming = true;
-    let saved = 0;
+    const saved: string[] = [];
     let why = '';
     for (const h of wanted) {
       try {
         const t = await api.claimToken(h.id, h.claim_key!);
         if (this.token?.uuid === t.uuid) this.token = t;
         this.#patch(h.id, (e) => entryFor(t, e, e.last_seen)); // in place: not a visit
-        saved++;
+        saved.push(h.id);
       } catch (e) {
         const status = e instanceof ApiError ? e.status : 0;
         if (gone(e)) {
@@ -835,11 +869,23 @@ class Store {
       }
     }
     this.claiming = false;
-    const n = wanted.length;
-    if (saved === n) this.toast(n === 1 ? 'URL saved to your account' : `${n} URLs saved to your account`, 'success');
-    else if (saved) this.toast(`Saved ${saved} of ${n} URLs. The rest: ${why}`, 'error');
-    else this.toast(`Could not save ${n === 1 ? 'the URL' : 'the URLs'}: ${why}`, 'error');
-    return saved;
+    return { saved, why };
+  }
+
+  // Makes URLs anonymous again: the undo of saving them on sign-in.
+  async #release(ids: string[]) {
+    let failed = '';
+    for (const id of ids) {
+      try {
+        const t = await api.releaseToken(id);
+        if (this.token?.uuid === t.uuid) this.token = t;
+        this.#patch(id, (e) => entryFor(t, e, e.last_seen));
+      } catch (e) {
+        failed ||= (e as Error).message;
+      }
+    }
+    if (failed) this.toast(`Could not make it anonymous again: ${failed}`, 'error');
+    else this.toast(ids.length === 1 ? 'The URL is anonymous again' : 'The URLs are anonymous again', 'success');
   }
 
   #patch(id: string, change: (h: HistoryEntry) => HistoryEntry) {

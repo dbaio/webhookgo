@@ -110,7 +110,7 @@
       <h2>In your browser</h2>
       <p>
         The app keeps the URLs you opened and your preferences in your browser's local storage{c.accounts
-          ? ', with the ID of the last account signed in there, and a session cookie while you are signed in'
+          ? ', and, for an hour, which URLs each tab created, so that signing in from that tab saves them to your account. While you are signed in, there is also a session cookie'
           : ''}. There are no analytics, ads or third-party scripts: the app loads only from this server.
       </p>
     </section>
