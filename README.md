@@ -390,7 +390,8 @@ the requests it captures stay in Redis and follow `TOKEN_TTL`,
 `MAX_REQUESTS` and `MAX_URL_STORAGE` as always. Webhooks can still be sent
 to it by anyone: the capture side is public, as it has to be. Each account
 may own up to `ACCOUNT_MAX_URLS`. **Your URLs** in the menu lists them, on
-any browser.
+any browser, and so does the account page, with each one's requests and a
+delete button.
 
 Anonymous URLs still work as before, with one addition: with accounts on,
 creating one returns a `claim_key`, once. The app keeps it in the browser's

@@ -11,6 +11,7 @@
   import AccountShell from './components/AccountShell.svelte';
   import ApiKeys from './components/ApiKeys.svelte';
   import FormError from './components/FormError.svelte';
+  import MyUrls from './components/MyUrls.svelte';
   import Notice from './components/Notice.svelte';
 
   const day = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
@@ -102,6 +103,8 @@
           </p>
         </div>
       </header>
+
+      <MyUrls />
 
       <section class="card" aria-labelledby="account-profile">
         <h2 id="account-profile">Profile</h2>
