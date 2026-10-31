@@ -236,6 +236,12 @@ func claimHash(key string) string { return hex.EncodeToString(auth.HashSecret(ke
 
 func isAdmin(u *accounts.User) bool { return u != nil && u.Role == accounts.RoleAdmin }
 
+// seesCreator reports whether u may see who created t: its owner and the
+// admins, not anyone else who has the link.
+func seesCreator(u *accounts.User, t *store.Token) bool {
+	return isAdmin(u) || u != nil && t.Owned() && u.ID == t.OwnerID
+}
+
 // noteAdminAccess logs url.view when an admin opens a URL that belongs to
 // someone else, or an anonymous one, once an hour per admin and URL. A
 // failure is only logged: it does not refuse the view.

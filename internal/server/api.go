@@ -64,7 +64,20 @@ type signatureView struct {
 	HasSecret bool `json:"has_secret"`
 }
 
+// view is t as the API shows it to the request's user. Who created the URL
+// (ip, user_agent) is left out but for its owner and the admins: anyone
+// else with the link would learn the creator's address.
 func (s *Server) view(r *http.Request, t *store.Token, count int64) *tokenView {
+	return s.viewAs(userFrom(r), r, t, count)
+}
+
+// viewAs is view for u, nil for someone signed out.
+func (s *Server) viewAs(u *accounts.User, r *http.Request, t *store.Token, count int64) *tokenView {
+	if !seesCreator(u, t) {
+		c := *t
+		c.IP, c.UserAgent = "", ""
+		t = &c
+	}
 	v := &tokenView{
 		Token:        t,
 		URL:          s.baseURL(r) + "/" + t.ID,
@@ -486,9 +499,9 @@ func (s *Server) saveAndAnnounce(r *http.Request, t *store.Token) (*tokenView, e
 	if err != nil {
 		return nil, err
 	}
-	v := s.view(r, t, n)
-	s.publish(r.Context(), t.ID, event{Type: "token.updated", Token: v, Total: n})
-	return v, nil
+	// Live clients may be anyone with the link: they get what anyone gets.
+	s.publish(r.Context(), t.ID, event{Type: "token.updated", Token: s.viewAs(nil, r, t, n), Total: n})
+	return s.view(r, t, n), nil
 }
 
 // saveError answers a failed write: an anonymous URL claimed since loadToken

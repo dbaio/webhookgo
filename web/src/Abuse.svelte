@@ -59,12 +59,13 @@
     row.state = 'loading';
     try {
       const token = await api.getToken(row.id);
-      const [oldest, newest] = await Promise.all([
+      const [oldest, newest, creator] = await Promise.all([
         api.listRequests(row.id, { perPage: 1, sorting: 'oldest' }),
         api.listRequests(row.id, { perPage: 1, sorting: 'newest' }),
+        api.abuseCreator(row.id).catch(() => null), // the rest of the API leaves the creator out
       ]);
       if (seq !== run) return;
-      row.token = token;
+      row.token = creator ? { ...token, ip: creator.ip, user_agent: creator.user_agent } : token;
       row.first = oldest.data[0]?.created_at;
       row.last = newest.data[0]?.created_at;
       row.state = 'live';

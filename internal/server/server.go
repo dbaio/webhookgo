@@ -86,6 +86,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /token/{token}/request/{request}/raw", s.rawRequest)
 	mux.HandleFunc("DELETE /token/{token}/request/{request}", s.deleteRequest)
 	mux.HandleFunc("GET /api/config", s.appConfig)
+	mux.HandleFunc("GET /api/abuse/urls/{token}", s.abuseCreator)
 	mux.HandleFunc("GET /api/me", s.me)
 	mux.HandleFunc("POST /api/login", s.withAccounts(s.login))
 	mux.HandleFunc("POST /api/logout", s.withAccounts(s.logout))

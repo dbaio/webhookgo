@@ -75,6 +75,8 @@ export const api = {
   rawUrl: (id: string, rid: string, download = false) =>
     `/token/${id}/request/${rid}/raw${download ? '?download=1' : ''}`,
   streamUrl: (id: string) => `/token/${id}/stream`,
+  /** Who created an anonymous URL, for the abuse page: the rest of the API shows it to the owner and the admins only. */
+  abuseCreator: (id: string) => call<{ ip: string; user_agent: string; created_at: string }>('GET', `/api/abuse/urls/${id}`),
 
   // Accounts (only with ACCOUNTS=on; /api/me answers null otherwise)
   me: () => call<{ user: User | null }>('GET', '/api/me').then((r) => r.user),

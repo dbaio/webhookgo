@@ -581,7 +581,10 @@ Routes mirror webhook.site's open-source API. Differences: `query` and `form` ar
 ordered `[{name, value}]` lists (repeated names are kept), header names are lower-case,
 an unknown URL answers `404`, a deleted one `410`, and a [private one](#private-urls)
 `403` to anyone but its owner and the admins (every `/token/<token>…` route; capture
-stays public).
+stays public). A URL's `ip` and `user_agent`, those of whoever created it, are empty
+but for its owner and the admins; for an anonymous URL, the abuse page reads them
+from `GET /api/abuse/urls/<token>` (`{"ip", "user_agent", "created_at"}`, `403` for a
+private URL), with or without accounts.
 
 | Method | Path | |
 | --- | --- | --- |
