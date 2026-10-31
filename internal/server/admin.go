@@ -273,17 +273,31 @@ func (s *Server) adminDeleteUser(w http.ResponseWriter, r *http.Request) {
 // adminURL is a URL in the panel's list.
 type adminURL struct {
 	*tokenView
-	Owner           accounts.Owner `json:"owner"`
-	LatestRequestAt *time.Time     `json:"latest_request_at"`
+	Owner           *accounts.Owner `json:"owner"` // null for an anonymous URL
+	LatestRequestAt *time.Time      `json:"latest_request_at"`
 }
 
 // adminListURLs is GET /api/admin/urls: every URL that belongs to an
-// account, newest first, with ?q (a description, or a URL's ID), ?owner (a
-// user ID), ?page and ?per_page.
+// account, newest first, with ?q (a description, or a URL's ID or creator
+// IP), ?owner (a user ID), ?page and ?per_page. With ?kind=anonymous, the
+// anonymous URLs instead.
 func (s *Server) adminListURLs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, perPage := paging(r)
 	owner := strings.ToLower(strings.TrimSpace(q.Get("owner")))
+	switch q.Get("kind") {
+	case "", "owned":
+	case "anonymous":
+		if owner != "" {
+			writeError(w, http.StatusUnprocessableEntity, "owner only applies to private URLs")
+			return
+		}
+		s.adminListAnonymous(w, r, strings.TrimSpace(q.Get("q")), page, perPage)
+		return
+	default:
+		writeError(w, http.StatusUnprocessableEntity, "kind must be owned or anonymous")
+		return
+	}
 	if owner != "" && !isUUID(owner) {
 		writeError(w, http.StatusUnprocessableEntity, "owner must be a user id")
 		return
@@ -304,7 +318,41 @@ func (s *Server) adminListURLs(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]adminURL, len(urls))
 	for i, u := range urls {
-		items[i] = adminURL{tokenView: s.view(r, u.Token, activity[i].Requests), Owner: u.Owner, LatestRequestAt: activity[i].LastRequestAt}
+		items[i] = adminURL{tokenView: s.view(r, u.Token, activity[i].Requests), Owner: &u.Owner, LatestRequestAt: activity[i].LastRequestAt}
+	}
+	writeJSON(w, http.StatusOK, pageOf(items, len(items), total, page, perPage))
+}
+
+// adminListAnonymous answers ?kind=anonymous. A search reads every
+// anonymous URL, so it waits its turn like other heavy reads.
+func (s *Server) adminListAnonymous(w http.ResponseWriter, r *http.Request, search string, page, perPage int) {
+	if search != "" {
+		select {
+		case s.heavy <- struct{}{}:
+			defer func() { <-s.heavy }()
+		case <-r.Context().Done():
+			return
+		}
+	}
+	urls, total, err := s.store.ListAnonymous(r.Context(), search, page, perPage)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	ids := make([]string, len(urls))
+	for i, u := range urls {
+		ids[i] = u.Token.ID
+	}
+	activity, err := s.store.Activities(r.Context(), ids)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	items := make([]adminURL, len(urls))
+	for i, u := range urls {
+		v := s.view(r, u.Token, activity[i].Requests)
+		v.ExpiresAt = &u.ExpiresAt
+		items[i] = adminURL{tokenView: v, LatestRequestAt: activity[i].LastRequestAt}
 	}
 	writeJSON(w, http.StatusOK, pageOf(items, len(items), total, page, perPage))
 }

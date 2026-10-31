@@ -17,7 +17,7 @@
     'user.enable': 'Enable a user',
     'user.reset_link': 'Password reset link',
     'user.delete': 'Delete a user',
-    'url.view': "Open someone's private URL",
+    'url.view': "Open someone's URL",
     'url.delete': 'Delete a URL',
     'report.resolve': 'Close the abuse reports of a URL',
     setup: 'First admin created',

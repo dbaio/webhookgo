@@ -84,6 +84,7 @@ func run() error {
 		if err := bootstrapAdmin(ctx, cfg, acc); err != nil {
 			return err
 		}
+		go keepAnonymousIndex(ctx, st)
 	}
 
 	srv, err := server.New(cfg, st, acc, h, web.FS(), version)

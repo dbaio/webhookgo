@@ -113,6 +113,8 @@ func (s *Server) loadToken(w http.ResponseWriter, r *http.Request) (*store.Token
 		case u.ID != t.OwnerID:
 			s.noteAdminAccess(r, u, t)
 		}
+	} else if isAdmin(u) { // public, but the panel lists them all: opening one is logged too
+		s.noteAdminAccess(r, u, t)
 	}
 	return t, true
 }

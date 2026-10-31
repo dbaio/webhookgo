@@ -29,9 +29,12 @@ export interface Owner {
   email: string;
 }
 
-/** An owned URL in the admin list. */
+/** Which URLs the admin list shows: private ones, or anonymous (public) ones. */
+export type UrlKind = 'owned' | 'anonymous';
+
+/** A URL in the admin list; owner is null for an anonymous one. */
 export interface AdminUrl extends Token {
-  owner: Owner;
+  owner: Owner | null;
   latest_request_at: string | null;
 }
 
@@ -174,8 +177,8 @@ export const adminApi = {
   resetLink: (id: string) => call<AdminLink>('POST', `/api/admin/users/${id}/reset`),
   deleteUser: (id: string) => call<void>('DELETE', `/api/admin/users/${id}`),
 
-  listUrls: ({ page = 1, perPage = 25, q = '', owner = '' }: AdminListParams & { owner?: string } = {}) =>
-    call<Page<AdminUrl>>('GET', `/api/admin/urls${query({ q, owner, page, per_page: perPage })}`),
+  listUrls: ({ page = 1, perPage = 25, q = '', owner = '', kind = 'owned' }: AdminListParams & { owner?: string; kind?: UrlKind } = {}) =>
+    call<Page<AdminUrl>>('GET', `/api/admin/urls${query({ kind: kind === 'owned' ? '' : kind, q, owner, page, per_page: perPage })}`),
   lookupUrl: (id: string) => call<UrlLookup>('GET', `/api/admin/urls/${id}`),
   deleteUrl: (id: string) => call<void>('DELETE', `/api/admin/urls/${id}`),
 

@@ -1,5 +1,6 @@
 <script lang="ts">
   import ExternalLink from '@lucide/svelte/icons/external-link';
+  import Globe from '@lucide/svelte/icons/globe';
   import LoaderCircle from '@lucide/svelte/icons/loader-circle';
   import Lock from '@lucide/svelte/icons/lock';
   import ScanSearch from '@lucide/svelte/icons/scan-search';
@@ -7,7 +8,7 @@
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import X from '@lucide/svelte/icons/x';
   import { onMount, untrack } from 'svelte';
-  import { adminApi, findUUID, type AdminUrl, type Owner, type UrlLookup } from '../../lib/admin';
+  import { adminApi, findUUID, type AdminUrl, type Owner, type UrlKind, type UrlLookup } from '../../lib/admin';
   import { ApiError } from '../../lib/api';
   import { duration } from '../../lib/format';
   import { app } from '../../lib/state.svelte';
@@ -24,6 +25,16 @@
     owner: Owner | null;
   }
   let { lookup, owner = $bindable() }: Props = $props();
+
+  // Private URLs in the list, or anonymous ones: #urls/private, #urls/public.
+  // A lookup (#urls/<id>) keeps the list as it is.
+  const kindIn = (hash: string) => ({ '#urls/public': 'anonymous', '#urls/private': 'owned' })[hash] as UrlKind | undefined;
+  let kind = $state<UrlKind>(kindIn(location.hash) ?? 'owned');
+  onMount(() => {
+    const follow = () => (kind = kindIn(location.hash) ?? kind);
+    addEventListener('hashchange', follow);
+    return () => removeEventListener('hashchange', follow);
+  });
 
   const PER_PAGE = 25;
   const count = new Intl.NumberFormat();
@@ -110,7 +121,7 @@
     loading = true;
     error = '';
     try {
-      const r = await adminApi.listUrls({ page, perPage: PER_PAGE, q: q.trim(), owner: owner?.id });
+      const r = await adminApi.listUrls({ page, perPage: PER_PAGE, q: q.trim(), kind, owner: kind === 'owned' ? owner?.id : '' });
       if (n !== seq) return;
       if (!r.data.length && page > 1 && r.total > 0) return load(Math.ceil(r.total / PER_PAGE));
       res = r;
@@ -123,9 +134,11 @@
 
   onMount(() => () => clearTimeout(timer));
 
-  // Reload from the first page when the owner filter changes (and at first).
+  // Reload from the first page when the owner filter or the kind changes
+  // (and at first).
   $effect(() => {
     void owner?.id;
+    void kind;
     untrack(() => load(1));
   });
 
@@ -133,6 +146,20 @@
     clearTimeout(timer);
     timer = setTimeout(() => load(1), 250);
   }
+
+  function showKind(k: UrlKind) {
+    if (k === 'anonymous') owner = null;
+    location.hash = k === 'anonymous' ? '#urls/public' : '#urls/private';
+  }
+
+  // Every anonymous URL created from one address.
+  function searchIP(ip: string) {
+    clearTimeout(timer);
+    q = ip;
+    load(1);
+  }
+  const anonymous = $derived(kind === 'anonymous');
+  const noun = $derived(anonymous ? 'public URLs' : 'private URLs');
 
   // --- Delete --------------------------------------------------------------------
   let doomed = $state<{ id: string; description: string; owner: Owner | null; requests: number } | null>(null);
@@ -238,7 +265,7 @@
               href={`/#/${foundId}`}
               target="_blank"
               rel="noopener"
-              title={o && o.id !== app.user?.id ? "Open its requests in the viewer. Opening someone's private URL is logged." : 'Open its requests in the viewer'}
+              title={!o || o.id !== app.user?.id ? "Open its requests in the viewer. Opening a URL that isn't yours is logged." : 'Open its requests in the viewer'}
             >
               <ExternalLink /> Open
             </a>
@@ -311,11 +338,15 @@
   </section>
 
   <div class="toolbar">
+    <div class="seg" role="group" aria-label="Which URLs">
+      <button type="button" class:on={!anonymous} aria-pressed={!anonymous} onclick={() => showKind('owned')}><Lock /> Private</button>
+      <button type="button" class:on={anonymous} aria-pressed={anonymous} onclick={() => showKind('anonymous')}><Globe /> Public</button>
+    </div>
     <label class="search">
       <Search />
-      <input class="input" type="search" placeholder="Search by name or exact ID" aria-label="Search private URLs" bind:value={q} oninput={search} />
+      <input class="input" type="search" placeholder="Search by name, exact ID or IP" aria-label={`Search ${noun}`} bind:value={q} oninput={search} />
     </label>
-    {#if owner}
+    {#if owner && !anonymous}
       <button type="button" class="chip filter" title="Show every owner's URLs" onclick={() => (owner = null)}>
         Owner: {owner.email} <X />
       </button>
@@ -328,13 +359,14 @@
   <div class="card table-card">
     <div class="table-wrap">
       <table>
-        <caption class="sr-only">Private URLs{owner ? ` of ${owner.email}` : ''}, newest first</caption>
+        <caption class="sr-only">{anonymous ? 'Public URLs' : 'Private URLs'}{owner && !anonymous ? ` of ${owner.email}` : ''}, newest first</caption>
         <thead>
           <tr>
             <th>URL</th>
-            <th>Owner</th>
+            <th>{anonymous ? 'Created from' : 'Owner'}</th>
             <th class="num">Requests</th>
             <th>Last request</th>
+            {#if anonymous}<th>Expires</th>{/if}
             <th>Created</th>
             <th><span class="sr-only">Actions</span></th>
           </tr>
@@ -346,9 +378,20 @@
                 <span class="title">{#if u.description}{u.description}{:else}<span class="muted">Untitled</span>{/if}</span>
                 <code>{u.uuid}</code>
               </td>
-              <td>{@render ownerCell(u.owner)}</td>
+              <td>
+                {#if anonymous}
+                  {#if u.ip}
+                    <button type="button" class="btn ghost xs owner mono" title={`Show every public URL created from ${u.ip}`} onclick={() => searchIP(u.ip)}
+                      >{u.ip}</button
+                    >
+                  {:else}<span class="muted">–</span>{/if}
+                {:else}
+                  {@render ownerCell(u.owner)}
+                {/if}
+              </td>
               <td class="num">{count.format(u.request_count)}</td>
               <td><When iso={u.latest_request_at} empty="None yet" /></td>
+              {#if anonymous}<td><When iso={u.expires_at} /></td>{/if}
               <td><When iso={u.created_at} /></td>
               <td class="actions">
                 <div class="row-actions">
@@ -375,15 +418,17 @@
             </tr>
           {:else}
             <tr>
-              <td colspan="6" class="none">
-                {#if loading}<LoaderCircle class="spin" size={14} /> Loading…{:else if !error}{q.trim() || owner ? 'No private URLs match.' : 'No private URLs yet.'}{/if}
+              <td colspan={anonymous ? 7 : 6} class="none">
+                {#if loading}<LoaderCircle class="spin" size={14} /> Loading…{:else if !error}{q.trim() || (owner && !anonymous)
+                    ? `No ${noun} match.`
+                    : `No ${noun} yet.`}{/if}
               </td>
             </tr>
           {/each}
         </tbody>
       </table>
     </div>
-    <Pager page={res} {loading} label="Pages of private URLs" onpage={load} />
+    <Pager page={res} {loading} label={`Pages of ${noun}`} onpage={load} />
   </div>
 </div>
 
@@ -404,7 +449,7 @@
       <code class="id">{d.id}</code>
     </p>
     <p>
-      It stops answering at once (<code>410 Gone</code>){d.requests === 1
+      It stops answering at once (<code>{d.owner ? '404' : '410 Gone'}</code>){d.requests === 1
         ? ', and its stored request is erased'
         : d.requests > 1
           ? `, and its ${count.format(d.requests)} stored requests are erased`

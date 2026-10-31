@@ -379,10 +379,10 @@ func (s *Store) AdminURL(ctx context.Context, id string) (*OwnedURL, error) {
 
 // ListAllURLs returns one page of every URL that belongs to an account,
 // newest first, and how many match. A non-empty search keeps those whose
-// description contains it, ignoring case, or whose ID is exactly it; a
-// non-empty owner keeps that account's only.
+// description contains it, ignoring case, or whose ID or creator IP is
+// exactly it; a non-empty owner keeps that account's only.
 func (s *Store) ListAllURLs(ctx context.Context, search, ownerID string, page, perPage int) ([]*OwnedURL, int, error) {
-	const where = `where ($1 = '' or strpos(lower(l.config->>'description'), lower($1)) > 0 or l.token_id::text = lower($1))
+	const where = `where ($1 = '' or strpos(lower(l.config->>'description'), lower($1)) > 0 or l.token_id::text = lower($1) or l.config->>'ip' = $1)
 		and ($2 = '' or l.owner_id::text = $2)`
 	var total int
 	if err := s.pool.QueryRow(ctx, "select count(*) from urls l "+where, search, ownerID).Scan(&total); err != nil {

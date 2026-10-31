@@ -347,7 +347,7 @@ every other session.
 Admins also have **Admin** in that menu, at `/admin`:
 
 - **Overview**: how many users, admins and disabled accounts there are and
-  how many private URLs; Redis memory (used against `maxmemory`) and evicted
+  how many private and public URLs; Redis memory (used against `maxmemory`) and evicted
   keys; the database size; the version.
 - **Users**: search; invite (the link is shown once, valid 72 hours); make
   someone an admin or a user; disable (their sessions end and they cannot
@@ -363,9 +363,18 @@ Admins also have **Admin** in that menu, at `/admin`:
   record and each report's message; delete the URL, disable its owner or
   dismiss the reports. See [Abuse handling](#abuse-handling).
 - **Log**: every admin action, with who did it, from where and when. That
-  includes opening someone else's private URL (noted once an hour per URL),
+  includes opening someone else's URL, private or anonymous (noted once an
+  hour per URL),
   links made from the command line, and the creation of the first admin.
   The log is only ever appended to.
+
+**URLs → Public** lists the anonymous URLs as well, with the IP each was
+created from and when it expires; both lists search by name, exact ID or
+creator IP. Opening one is logged, as opening someone's private URL is.
+Anonymous URLs live in Redis only, so with accounts on they are
+also indexed in one more Redis key (`wh:anonymous`): at startup the instance
+adds those created while accounts were off, and every 10 minutes it drops
+those that expired.
 
 The panel runs on its own JSON API, open only to admins signed in with a
 session (an API key never reaches it):
@@ -376,7 +385,7 @@ session (an API key never reaches it):
 | `GET` / `POST` | `/api/admin/users` | List accounts (`q`, `page`, `per_page`); invite one: `{"email", "role"}` → `{"link", "expires_at"}`. |
 | `PATCH` / `DELETE` | `/api/admin/users/<id>` | Change the role (`{"role"}`) or disable (`{"disabled"}`); delete the account and its URLs. |
 | `POST` | `/api/admin/users/<id>/reset` | A password reset link: `{"link", "expires_at"}`. |
-| `GET` | `/api/admin/urls` | Every private URL with its owner (`q`, `owner`, `page`, `per_page`). |
+| `GET` | `/api/admin/urls` | Every private URL with its owner (`q`, `owner`, `page`, `per_page`); `kind=anonymous` lists the anonymous ones instead (`q`, `page`, `per_page`). |
 | `GET` / `DELETE` | `/api/admin/urls/<id>` | What is known about any UUID: `{"token", "owner", "record"}`; delete the URL. |
 | `GET` | `/api/admin/reports` | Abuse reports grouped by URL, newest first (`status=open\|actioned\|dismissed\|all`, `page`, `per_page`). |
 | `POST` | `/api/admin/reports/resolve` | Close a URL's open reports: `{"token_id", "action": "delete_url"\|"disable_owner"\|"dismiss", "note"}` → `{"updated"}`. |

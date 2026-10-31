@@ -116,7 +116,13 @@ func (tk *tokens) create(ctx context.Context, t *store.Token) error {
 			return err
 		}
 	}
-	return tk.store.CreateToken(ctx, t)
+	if err := tk.store.CreateToken(ctx, t); err != nil {
+		return err
+	}
+	if !t.Owned() {
+		tk.list(ctx, t, true)
+	}
+	return nil
 }
 
 // update replaces a URL's settings. For an owned URL whose row is gone
@@ -149,7 +155,13 @@ func (tk *tokens) delete(ctx context.Context, t *store.Token, ip, userAgent stri
 			return err
 		}
 	}
-	return tk.store.DeleteToken(ctx, t, ip, userAgent)
+	if err := tk.store.DeleteToken(ctx, t, ip, userAgent); err != nil {
+		return err
+	}
+	if !t.Owned() {
+		tk.list(ctx, t, false)
+	}
+	return nil
 }
 
 // claim stores an anonymous URL that t's owner just took over.
@@ -162,6 +174,7 @@ func (tk *tokens) claim(ctx context.Context, t *store.Token) error {
 		_ = tk.store.Uncache(context.WithoutCancel(ctx), t.ID)
 		return err
 	}
+	tk.list(ctx, t, false)
 	return nil
 }
 
@@ -171,7 +184,31 @@ func (tk *tokens) release(ctx context.Context, t *store.Token) error {
 	if err := tk.accounts.DeleteURL(ctx, t.ID); err != nil {
 		return err
 	}
-	return tk.store.SaveToken(ctx, t)
+	if err := tk.store.SaveToken(ctx, t); err != nil {
+		return err
+	}
+	tk.list(ctx, t, true)
+	return nil
+}
+
+// list adds an anonymous URL to the admin panel's index, or takes one off,
+// with accounts on. A failure is only logged: the URL works all the same,
+// and the index heals (a list drops what is gone or owned, and the next
+// startup adds what is missing).
+func (tk *tokens) list(ctx context.Context, t *store.Token, add bool) {
+	if tk.accounts == nil {
+		return
+	}
+	ctx = context.WithoutCancel(ctx)
+	var err error
+	if add {
+		err = tk.store.IndexAnonymous(ctx, t)
+	} else {
+		err = tk.store.UnindexAnonymous(ctx, t.ID)
+	}
+	if err != nil {
+		slog.Warn("anonymous URL index not updated", "url", t.ID, "add", add, "err", err)
+	}
 }
 
 // addRequest stores a captured request. When the token was evicted between
@@ -200,14 +237,17 @@ func claimHash(key string) string { return hex.EncodeToString(auth.HashSecret(ke
 func isAdmin(u *accounts.User) bool { return u != nil && u.Role == accounts.RoleAdmin }
 
 // noteAdminAccess logs url.view when an admin opens a URL that belongs to
-// someone else, once an hour per admin and URL. A failure is only logged:
-// it does not refuse the view.
+// someone else, or an anonymous one, once an hour per admin and URL. A
+// failure is only logged: it does not refuse the view.
 func (s *Server) noteAdminAccess(r *http.Request, u *accounts.User, t *store.Token) {
 	first, err := s.store.NoteAdminView(r.Context(), u.ID, t.ID)
 	if err == nil && first {
-		details := map[string]any{"owner_id": t.OwnerID}
-		if owner, err := s.accounts.UserByID(r.Context(), t.OwnerID); err == nil {
-			details["owner_email"] = owner.Email
+		details := map[string]any{"anonymous": true}
+		if t.Owned() {
+			details = map[string]any{"owner_id": t.OwnerID}
+			if owner, err := s.accounts.UserByID(r.Context(), t.OwnerID); err == nil {
+				details["owner_email"] = owner.Email
+			}
 		}
 		err = s.logAdmin(r, accounts.ActionURLView, accounts.TargetURL, t.ID, details)
 	}

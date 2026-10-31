@@ -23,12 +23,14 @@
   let loading = $state(false);
   let error = $state('');
   let updated = $state('');
+  let anonymous = $state<number | null>(null); // the public URLs, counted by their list
 
   async function load() {
     loading = true;
     error = '';
     try {
-      stats = await adminApi.stats();
+      const [s, page] = await Promise.all([adminApi.stats(), adminApi.listUrls({ kind: 'anonymous', perPage: 1 })]);
+      [stats, anonymous] = [s, page.total];
       updated = new Date().toISOString();
       onstats?.(stats);
     } catch (e) {
@@ -81,6 +83,7 @@
         <span class="icon"><Lock /></span>
         <span class="value">{count.format(s.urls.owned)}</span>
         <span class="label">Private URLs</span>
+        {#if anonymous !== null}<span class="hint">and {count.format(anonymous)} public</span>{/if}
       </a>
       <a class="card tile link" href="#reports">
         <span class="icon" class:warn={s.reports.open > 0}><Flag /></span>
