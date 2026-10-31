@@ -3,12 +3,15 @@
   import Globe from '@lucide/svelte/icons/globe';
   import LoaderCircle from '@lucide/svelte/icons/loader-circle';
   import Lock from '@lucide/svelte/icons/lock';
+  import Network from '@lucide/svelte/icons/network';
+  import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import ScanSearch from '@lucide/svelte/icons/scan-search';
   import Search from '@lucide/svelte/icons/search';
   import Trash2 from '@lucide/svelte/icons/trash-2';
+  import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
   import X from '@lucide/svelte/icons/x';
   import { onMount, untrack } from 'svelte';
-  import { adminApi, findUUID, type AdminUrl, type Owner, type UrlKind, type UrlLookup } from '../../lib/admin';
+  import { adminApi, findUUID, type AdminUrl, type CreatorStats, type Owner, type UrlKind, type UrlLookup, type UrlSort } from '../../lib/admin';
   import { ApiError } from '../../lib/api';
   import { duration } from '../../lib/format';
   import { app } from '../../lib/state.svelte';
@@ -121,7 +124,16 @@
     loading = true;
     error = '';
     try {
-      const r = await adminApi.listUrls({ page, perPage: PER_PAGE, q: q.trim(), kind, owner: kind === 'owned' ? owner?.id : '' });
+      const pub = kind === 'anonymous';
+      const r = await adminApi.listUrls({
+        page,
+        perPage: PER_PAGE,
+        q: q.trim(),
+        kind,
+        owner: pub ? '' : owner?.id,
+        pages: pub && pagesOnly,
+        sort: pub ? sort : 'newest',
+      });
       if (n !== seq) return;
       if (!r.data.length && page > 1 && r.total > 0) return load(Math.ceil(r.total / PER_PAGE));
       res = r;
@@ -160,6 +172,30 @@
   }
   const anonymous = $derived(kind === 'anonymous');
   const noun = $derived(anonymous ? 'public URLs' : 'private URLs');
+
+  // --- Abuse signals (public URLs) -------------------------------------------------
+  // Each of these reads every public URL on the server.
+  let pagesOnly = $state(false);
+  let sort = $state<UrlSort>('newest');
+  let showIps = $state(false);
+  let ips = $state.raw<{ data: CreatorStats[]; urls: number } | null>(null);
+  let ipsError = $state('');
+
+  async function loadIps() {
+    ips = null;
+    ipsError = '';
+    try {
+      ips = await adminApi.topIps();
+    } catch (e) {
+      ipsError = `Could not count them: ${(e as Error).message}`;
+    }
+  }
+
+  function toggleIps() {
+    showIps = !showIps;
+    if (showIps) loadIps();
+  }
+  const PAGE_HINT = 'It answers with its own HTML, XML or SVG page: the usual sign of phishing';
 
   // --- Delete --------------------------------------------------------------------
   let doomed = $state<{ id: string; description: string; owner: Owner | null; requests: number } | null>(null);
@@ -346,6 +382,21 @@
       <Search />
       <input class="input" type="search" placeholder="Search by name, exact ID or IP" aria-label={`Search ${noun}`} bind:value={q} oninput={search} />
     </label>
+    {#if anonymous}
+      <button
+        type="button"
+        class="chip toggle"
+        class:on={pagesOnly}
+        aria-pressed={pagesOnly}
+        title="Only the URLs that answer with their own HTML, XML or SVG page: the usual sign of phishing"
+        onclick={() => ((pagesOnly = !pagesOnly), load(1))}><TriangleAlert /> Serve a page</button
+      >
+      <select class="input sort" aria-label="Order" bind:value={sort} onchange={() => load(1)}>
+        <option value="newest">Newest first</option>
+        <option value="requests">Most requests first</option>
+      </select>
+      <button type="button" class="btn sm" aria-expanded={showIps} aria-controls="top-ips" onclick={toggleIps}><Network /> Top IPs</button>
+    {/if}
     {#if owner && !anonymous}
       <button type="button" class="chip filter" title="Show every owner's URLs" onclick={() => (owner = null)}>
         Owner: {owner.email} <X />
@@ -356,10 +407,64 @@
 
   <FormError message={error} />
 
+  {#if anonymous && showIps}
+    <section id="top-ips" class="card table-card ips" aria-labelledby="top-ips-title">
+      <div class="ips-head">
+        <h3 id="top-ips-title">Addresses that created the most public URLs</h3>
+        <span class="muted">{ips ? `${count.format(ips.urls)} live URLs read` : ''}</span>
+        <span class="grow"></span>
+        <button type="button" class="btn ghost icon xs" title="Count again" aria-label="Count again" onclick={loadIps}><RefreshCw /></button>
+        <button type="button" class="btn ghost icon xs" title="Close" aria-label="Close" onclick={() => (showIps = false)}><X /></button>
+      </div>
+      {#if ipsError}
+        <FormError message={ipsError} />
+      {:else if !ips}
+        <p class="ips-note"><LoaderCircle class="spin" size={14} /> Reading every public URL…</p>
+      {:else if !ips.data.length}
+        <p class="ips-note">No public URLs.</p>
+      {:else}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Address</th>
+                <th class="num">URLs</th>
+                <th class="num">Serve a page</th>
+                <th class="num">Requests</th>
+                <th>Latest created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each ips.data as c (c.ip)}
+                <tr>
+                  <td>
+                    {#if c.ip}
+                      <button type="button" class="btn ghost xs owner mono" title={`Show every public URL created from ${c.ip}`} onclick={() => searchIP(c.ip)}
+                        >{c.ip}</button
+                      >
+                    {:else}<span class="muted">Unknown</span>{/if}
+                  </td>
+                  <td class="num">{count.format(c.urls)}</td>
+                  <td class="num">{#if c.pages}<span class="chip warn flag" title={PAGE_HINT}>{count.format(c.pages)}</span>{:else}0{/if}</td>
+                  <td class="num">{count.format(c.requests)}</td>
+                  <td><When iso={c.latest_created_at} /></td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+    </section>
+  {/if}
+
   <div class="card table-card">
     <div class="table-wrap">
       <table>
-        <caption class="sr-only">{anonymous ? 'Public URLs' : 'Private URLs'}{owner && !anonymous ? ` of ${owner.email}` : ''}, newest first</caption>
+        <caption class="sr-only">
+          {anonymous ? 'Public URLs' : 'Private URLs'}{owner && !anonymous ? ` of ${owner.email}` : ''}{anonymous && pagesOnly
+            ? ' that serve a page'
+            : ''}, {anonymous && sort === 'requests' ? 'most requests first' : 'newest first'}
+        </caption>
         <thead>
           <tr>
             <th>URL</th>
@@ -375,7 +480,11 @@
           {#each res?.data ?? [] as u (u.uuid)}
             <tr class:on={u.uuid === foundId}>
               <td class="url">
-                <span class="title">{#if u.description}{u.description}{:else}<span class="muted">Untitled</span>{/if}</span>
+                <span class="title"
+                  >{#if u.serves_page}<span class="chip warn flag" title={PAGE_HINT}>serves a page</span>{/if}{#if u.description}{u.description}{:else}<span
+                      class="muted">Untitled</span
+                    >{/if}</span
+                >
                 <code>{u.uuid}</code>
               </td>
               <td>
@@ -419,7 +528,7 @@
           {:else}
             <tr>
               <td colspan={anonymous ? 7 : 6} class="none">
-                {#if loading}<LoaderCircle class="spin" size={14} /> Loading…{:else if !error}{q.trim() || (owner && !anonymous)
+                {#if loading}<LoaderCircle class="spin" size={14} /> Loading…{:else if !error}{q.trim() || (owner && !anonymous) || (anonymous && pagesOnly)
                     ? `No ${noun} match.`
                     : `No ${noun} yet.`}{/if}
               </td>
@@ -566,6 +675,56 @@
   }
   tr.on td {
     background: var(--bg-active);
+  }
+  .flag {
+    height: 18px;
+    margin-right: 6px;
+    font-size: 11px;
+    vertical-align: 1px;
+  }
+  .toggle {
+    height: 28px;
+    padding: 0 10px;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .toggle :global(svg) {
+    width: 13px;
+    height: 13px;
+  }
+  .toggle.on {
+    border-color: transparent;
+    background: var(--warning-soft);
+    color: var(--warning);
+  }
+  .sort {
+    width: auto;
+    height: 28px;
+    padding-left: 8px;
+    font-size: 12.5px;
+  }
+  .ips-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .ips-head h3 {
+    font-size: 13.5px;
+    font-weight: 600;
+  }
+  .ips-head .muted {
+    font-size: 12px;
+  }
+  .ips-note {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 14px;
+    color: var(--text-3);
+    font-size: 13px;
   }
   .row-actions {
     display: flex;

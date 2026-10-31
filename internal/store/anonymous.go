@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -45,14 +44,9 @@ func (s *Store) UnindexAnonymous(ctx context.Context, id string) error {
 }
 
 // ListAnonymous returns one page of the anonymous URLs, newest first, and
-// how many there are, without extending their lives. A non-empty search
-// keeps those whose name contains it, ignoring case, or whose ID or creator
-// IP is exactly it: that reads every URL in the index. Entries whose URL is
+// how many there are, without extending their lives. Entries whose URL is
 // gone, or belongs to an account now, are dropped from the index on the way.
-func (s *Store) ListAnonymous(ctx context.Context, search string, page, perPage int) ([]AnonymousURL, int, error) {
-	if search != "" {
-		return s.searchAnonymous(ctx, search, page, perPage)
-	}
+func (s *Store) ListAnonymous(ctx context.Context, page, perPage int) ([]AnonymousURL, int, error) {
 	start := int64((page - 1) * perPage)
 	var urls []AnonymousURL
 	// Dropping stale entries moves later ones into the page: read it again.
@@ -73,32 +67,26 @@ func (s *Store) ListAnonymous(ctx context.Context, search string, page, perPage 
 	return urls, int(total), err
 }
 
-func (s *Store) searchAnonymous(ctx context.Context, search string, page, perPage int) ([]AnonymousURL, int, error) {
-	lower := strings.ToLower(search)
-	skip := (page - 1) * perPage
-	urls := []AnonymousURL{}
-	total := 0
+// EachAnonymous calls fn with every anonymous URL, newest first, a chunk at
+// a time, without extending their lives, and drops stale entries on the way
+// as ListAnonymous does. It stops at the first error fn returns.
+func (s *Store) EachAnonymous(ctx context.Context, fn func([]AnonymousURL) error) error {
 	for start := int64(0); ; start += anonymousChunk {
 		ids, err := s.rdb.ZRevRange(ctx, anonymousKey, start, start+anonymousChunk-1).Result()
 		if err != nil {
-			return nil, 0, err
+			return err
 		}
 		found, stale, err := s.loadAnonymous(ctx, ids)
 		if err != nil {
-			return nil, 0, err
+			return err
 		}
-		for _, u := range found {
-			t := u.Token
-			if t.ID != lower && t.IP != search && !strings.Contains(strings.ToLower(t.Description), lower) {
-				continue
+		if len(found) > 0 {
+			if err := fn(found); err != nil {
+				return err
 			}
-			if total >= skip && len(urls) < perPage {
-				urls = append(urls, u)
-			}
-			total++
 		}
 		if len(ids) < anonymousChunk {
-			return urls, total, nil
+			return nil
 		}
 		start -= int64(stale) // they left the index: the next chunk starts earlier
 	}

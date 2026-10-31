@@ -105,6 +105,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/admin/users/{id}/reset", s.admin(s.adminResetLink))
 	mux.HandleFunc("DELETE /api/admin/users/{id}", s.admin(s.adminDeleteUser))
 	mux.HandleFunc("GET /api/admin/urls", s.admin(s.adminListURLs))
+	mux.HandleFunc("GET /api/admin/ips", s.admin(s.adminTopIPs))
 	mux.HandleFunc("GET /api/admin/urls/{id}", s.admin(s.adminLookupURL))
 	mux.HandleFunc("DELETE /api/admin/urls/{id}", s.admin(s.adminDeleteURL))
 	mux.HandleFunc("GET /api/admin/reports", s.admin(s.adminListReports))

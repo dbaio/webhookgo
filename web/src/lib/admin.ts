@@ -36,7 +36,23 @@ export type UrlKind = 'owned' | 'anonymous';
 export interface AdminUrl extends Token {
   owner: Owner | null;
   latest_request_at: string | null;
+  /** It answers with its own HTML, XML or SVG page: the usual sign of phishing. */
+  serves_page: boolean;
 }
+
+/** What the live anonymous URLs created from one address add up to. */
+export interface CreatorStats {
+  ip: string;
+  urls: number;
+  /** Of those, the ones that serve a page. */
+  pages: number;
+  /** Stored in them now. */
+  requests: number;
+  latest_created_at: string;
+}
+
+/** How the anonymous URLs are ordered: newest first, or the most requests first. */
+export type UrlSort = 'newest' | 'requests';
 
 /** What is kept about a URL (wh:{id}:audit), as `webhookgo audit` prints it. */
 export interface AuditRecord {
@@ -177,8 +193,21 @@ export const adminApi = {
   resetLink: (id: string) => call<AdminLink>('POST', `/api/admin/users/${id}/reset`),
   deleteUser: (id: string) => call<void>('DELETE', `/api/admin/users/${id}`),
 
-  listUrls: ({ page = 1, perPage = 25, q = '', owner = '', kind = 'owned' }: AdminListParams & { owner?: string; kind?: UrlKind } = {}) =>
-    call<Page<AdminUrl>>('GET', `/api/admin/urls${query({ kind: kind === 'owned' ? '' : kind, q, owner, page, per_page: perPage })}`),
+  listUrls: ({
+    page = 1,
+    perPage = 25,
+    q = '',
+    owner = '',
+    kind = 'owned',
+    pages = false,
+    sort = 'newest',
+  }: AdminListParams & { owner?: string; kind?: UrlKind; pages?: boolean; sort?: UrlSort } = {}) =>
+    call<Page<AdminUrl>>(
+      'GET',
+      `/api/admin/urls${query({ kind: kind === 'owned' ? '' : kind, q, owner, pages: pages ? 1 : undefined, sort: sort === 'newest' ? '' : sort, page, per_page: perPage })}`,
+    ),
+  /** The addresses that created the most live anonymous URLs (the top 20), and how many URLs were read. */
+  topIps: () => call<{ data: CreatorStats[]; urls: number }>('GET', '/api/admin/ips'),
   lookupUrl: (id: string) => call<UrlLookup>('GET', `/api/admin/urls/${id}`),
   deleteUrl: (id: string) => call<void>('DELETE', `/api/admin/urls/${id}`),
 
