@@ -73,6 +73,12 @@
   .copy :global(.btn) {
     height: 30px;
   }
+  @media (pointer: coarse) {
+    .copy .input,
+    .copy :global(.btn) {
+      height: 44px;
+    }
+  }
   .hint strong {
     color: var(--text-2);
     font-weight: 600;

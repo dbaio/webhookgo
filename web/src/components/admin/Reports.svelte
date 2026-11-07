@@ -275,6 +275,11 @@
     height: 30px;
     font-size: 13px;
   }
+  @media (pointer: coarse) {
+    .filter .input {
+      height: 44px;
+    }
+  }
   .group {
     display: grid;
     gap: 12px;

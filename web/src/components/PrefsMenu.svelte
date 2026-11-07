@@ -4,6 +4,7 @@
   import Forward from '@lucide/svelte/icons/forward';
   import GitFork from '@lucide/svelte/icons/git-fork';
   import Keyboard from '@lucide/svelte/icons/keyboard';
+  import Menu from '@lucide/svelte/icons/menu';
   import Monitor from '@lucide/svelte/icons/monitor';
   import Moon from '@lucide/svelte/icons/moon';
   import ShieldAlert from '@lucide/svelte/icons/shield-alert';
@@ -29,8 +30,14 @@
 </script>
 
 <Dropdown class="btn ghost icon sm" title="Preferences" width={290}>
-  {#snippet button()}<Ellipsis />{/snippet}
+  {#snippet button()}{#if app.mobile}<Menu />{:else}<Ellipsis />{/if}{/snippet}
   {#snippet children(close)}
+    {#if app.token}
+      <div class="menu-label">This URL</div>
+      <button type="button" class="menu-item" onclick={() => { close(); app.dialog = 'settings'; }}><SlidersHorizontal /> <span class="grow">Response settings</span><kbd>s</kbd></button>
+      <button type="button" class="menu-item" onclick={() => { close(); app.dialog = 'forward'; }}><Forward /> <span class="grow">Forwarding</span><kbd>f</kbd></button>
+      <div class="menu-sep"></div>
+    {/if}
     <div class="menu-label">Theme</div>
     <div class="theme">
       <div class="seg">
@@ -56,16 +63,17 @@
       <span class="grow">Times in UTC<small>Instead of {timeZone}</small></span>
       <input type="checkbox" class="switch" checked={app.prefs.utc} onchange={(e) => set('utc', e.currentTarget.checked)} />
     </label>
-    <label class="menu-item">
-      <span class="grow">Desktop notifications<small>When this tab is in the background</small></span>
-      <input type="checkbox" class="switch" checked={app.prefs.notify} onchange={(e) => app.setNotify(e.currentTarget.checked)} />
-    </label>
-    <div class="menu-sep"></div>
-    {#if app.token}
-      <button type="button" class="menu-item" onclick={() => { close(); app.dialog = 'settings'; }}><SlidersHorizontal /> <span class="grow">Response settings</span><kbd>s</kbd></button>
-      <button type="button" class="menu-item" onclick={() => { close(); app.dialog = 'forward'; }}><Forward /> <span class="grow">Forwarding</span><kbd>f</kbd></button>
+    <!-- iOS Safari has no notifications outside home-screen apps. -->
+    {#if typeof Notification !== 'undefined'}
+      <label class="menu-item">
+        <span class="grow">Desktop notifications<small>When this tab is in the background</small></span>
+        <input type="checkbox" class="switch" checked={app.prefs.notify} onchange={(e) => app.setNotify(e.currentTarget.checked)} />
+      </label>
     {/if}
-    <button type="button" class="menu-item" onclick={() => { close(); app.dialog = 'shortcuts'; }}><Keyboard /> <span class="grow">Keyboard shortcuts</span><kbd>?</kbd></button>
+    <div class="shortcuts">
+      <div class="menu-sep"></div>
+      <button type="button" class="menu-item" onclick={() => { close(); app.dialog = 'shortcuts'; }}><Keyboard /> <span class="grow">Keyboard shortcuts</span><kbd>?</kbd></button>
+    </div>
     <div class="menu-sep"></div>
     <a class="menu-item" href={REPO_URL} target="_blank" rel="noopener" onclick={close}><Star /> <span class="grow">Star on GitHub</span></a>
     <a class="menu-item" href={FORK_URL} target="_blank" rel="noopener" onclick={close}><GitFork /> <span class="grow">Fork on GitHub</span></a>
@@ -89,6 +97,12 @@
   }
   label.menu-item {
     cursor: pointer;
+  }
+  @media (hover: none) {
+    .shortcuts,
+    .menu-item kbd {
+      display: none;
+    }
   }
   small {
     display: block;

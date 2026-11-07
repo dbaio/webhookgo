@@ -49,14 +49,26 @@
   }
 
   const permalink = () => `${location.origin}${location.pathname}#/${app.token?.uuid}/${app.selectedId}`;
+
+  // One request at a time here: each starts at its top.
+  let view = $state<HTMLDivElement>();
+  $effect(() => {
+    void app.selectedId;
+    if (app.mobile) view?.parentElement?.scrollTo(0, 0);
+  });
 </script>
 
-<div class="view">
+<div bind:this={view} class="view">
   {#if head}
+    {#if app.mobile}
+      <nav class="mobile-nav" aria-label="Requests">
+        <button type="button" class="btn ghost sm" onclick={() => app.select(null)}><ArrowLeft /> Requests</button>
+        <span class="grow"></span>
+        <button type="button" class="btn ghost icon sm" aria-label="Newer request" disabled={index <= 0} onclick={() => app.step(-1)}><ChevronLeft /></button>
+        <button type="button" class="btn ghost icon sm" aria-label="Older request" disabled={index < 0 || index >= app.requests.length - 1} onclick={() => app.step(1)}><ChevronRight /></button>
+      </nav>
+    {/if}
     <header class="head">
-      {#if app.mobile}
-        <button type="button" class="btn ghost sm back" onclick={() => app.select(null)}><ArrowLeft /> Requests</button>
-      {/if}
       <div class="title">
         <MethodBadge method={head.method} size="lg" />
         <h1 class="mono">{head.path}{#if query}<span class="qs">?{query}</span>{/if}</h1>
@@ -208,9 +220,17 @@
     display: grid;
     gap: 10px;
   }
-  .back {
-    justify-self: start;
-    margin-left: -8px;
+  .mobile-nav {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: -12px -14px 0;
+    padding: 4px 8px 4px 6px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
   }
   .title {
     display: flex;
@@ -346,7 +366,7 @@
   }
   @media (max-width: 899px) {
     .view {
-      padding: 12px 14px 24px;
+      padding: 12px 14px max(24px, env(safe-area-inset-bottom));
     }
     h1 {
       font-size: 15px;

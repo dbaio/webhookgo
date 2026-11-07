@@ -66,6 +66,35 @@
       opacity: 1;
     }
   }
+  /* Side by side, a long name leaves the value a column a few letters wide. */
+  @media (max-width: 640px) {
+    .table {
+      display: block;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      border-top: 1px solid var(--border);
+    }
+    .row:first-child {
+      border-top: 0;
+    }
+    .row > div {
+      border-top: 0;
+    }
+    .row > .name {
+      max-width: none;
+      padding-bottom: 0;
+    }
+    .row > .value {
+      padding-top: 1px;
+    }
+    .row > .copy {
+      display: grid;
+      grid-area: 1 / 2 / span 2;
+      align-items: center;
+    }
+  }
   .empty {
     color: var(--text-3);
     font-size: 13px;

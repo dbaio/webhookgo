@@ -134,6 +134,11 @@
     height: 30px;
     font-size: 13px;
   }
+  @media (pointer: coarse) {
+    .filter .input {
+      height: 44px;
+    }
+  }
   .actor .email {
     white-space: nowrap;
   }

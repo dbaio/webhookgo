@@ -312,6 +312,17 @@
     padding-left: 29px;
     font-size: 13px;
   }
+  @media (pointer: coarse) {
+    .tab {
+      height: 44px;
+    }
+    .admin :global(.search svg) {
+      top: 15px;
+    }
+    .admin :global(.search .input) {
+      height: 44px;
+    }
+  }
   .admin :global(.table-card) {
     min-width: 0;
     overflow: hidden;

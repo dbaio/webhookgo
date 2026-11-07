@@ -210,6 +210,21 @@
   .save {
     color: var(--accent-strong);
   }
+  /* No hover on touch: the remove button stays, and the text makes room for it. */
+  @media (hover: none) {
+    .remove {
+      opacity: 1;
+    }
+    .row:has(.remove) .menu-item {
+      padding-right: 44px;
+    }
+    .claimable:has(.remove) .menu-item {
+      padding-right: 80px;
+    }
+    .claimable .remove {
+      right: 42px;
+    }
+  }
   .label-row {
     display: flex;
     align-items: center;
@@ -272,7 +287,8 @@
     width: 12px;
     height: 12px;
   }
-  @media (max-width: 899px) {
+  /* Tablets share the top bar's one row; phones have one for the URL. */
+  @media (min-width: 641px) and (max-width: 899px), (max-width: 350px) {
     :global(.btn.url-menu .label) {
       display: none;
     }

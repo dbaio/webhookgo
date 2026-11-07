@@ -61,6 +61,9 @@
     padding: 18px 20px 14px;
     border-bottom: 1px solid var(--border);
   }
+  header .btn {
+    flex: none; /* a long subtitle mustn't squeeze it */
+  }
   h2 {
     font-size: 16px;
     font-weight: 650;

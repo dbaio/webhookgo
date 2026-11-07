@@ -218,6 +218,11 @@
   .search .input {
     padding-left: 32px;
   }
+  @media (pointer: coarse) {
+    .search :global(svg) {
+      top: 14px;
+    }
+  }
   .urls {
     display: grid;
     margin: 0;

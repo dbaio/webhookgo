@@ -65,7 +65,7 @@
   <ul class="tips">
     <li><strong>Any method, any path:</strong> <code>/{app.token?.uuid.slice(0, 8)}…/orders/42</code> works too.</li>
     <li><strong>Force a status code</strong> by starting the path with it: <code>…/404</code>, <code>…/503/retry</code>.</li>
-    <li><strong>Customize the response</strong> (status, body, headers, delay, CORS) with the <em>Response</em> button.</li>
+    <li><strong>Customize the response</strong> (status, body, headers, delay, CORS) in <em>Response settings</em>.</li>
     <li><strong>Forward</strong> requests to <code>localhost</code> right from your browser.</li>
     {#if app.token?.expires_at === null}
       <li>Keeps the last {app.config.max_requests} requests, for {duration(app.config.token_ttl)} without new ones; this private URL doesn't expire.</li>

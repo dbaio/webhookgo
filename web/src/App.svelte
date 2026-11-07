@@ -62,7 +62,7 @@
   function onkeydown(e: KeyboardEvent) {
     if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return;
     const t = e.target as HTMLElement;
-    if (t.closest('input, textarea, select, [contenteditable]') || document.querySelector('dialog[open]')) return;
+    if (t.closest('input, textarea, select, [contenteditable]') || document.querySelector('dialog[open], .menu:popover-open')) return;
     if (app.status !== 'ready') return;
     const actions: Record<string, () => void> = {
       j: () => app.step(1),

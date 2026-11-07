@@ -98,6 +98,13 @@
   .tog.open::before {
     transform: rotate(90deg);
   }
+  @media (pointer: coarse) {
+    .tog::after {
+      content: '';
+      position: absolute;
+      inset: -8px;
+    }
+  }
   .tog:hover {
     background: var(--bg-hover);
   }

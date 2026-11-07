@@ -112,6 +112,7 @@ class Store {
   toasts = $state<Toast[]>([]);
   now = $state(Date.now());
   mobile = $state(typeof matchMedia !== 'undefined' && matchMedia(MOBILE).matches);
+  touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
   dialog = $state<Dialog>(null);
   user = $state<User | null>(null); // who is signed in, with accounts on
   userLoaded = $state(false); // /api/me has answered: until then the top bar shows neither "Sign in" nor an avatar

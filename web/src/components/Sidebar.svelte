@@ -200,6 +200,11 @@
     right: 8px;
     pointer-events: none;
   }
+  @media (hover: none) {
+    .hint-key {
+      display: none;
+    }
+  }
   .methods {
     display: flex;
     gap: 4px;
@@ -225,6 +230,15 @@
     border-color: transparent;
     background: var(--text);
     color: var(--bg-elev);
+  }
+  @media (pointer: coarse) {
+    .search .input {
+      height: 44px;
+    }
+    .methods button {
+      height: 34px;
+      padding: 0 12px;
+    }
   }
   .list {
     flex: 1;
@@ -264,5 +278,19 @@
     gap: 8px;
     color: var(--text-2);
     font-weight: 500;
+  }
+  /* A phone on its side: the height goes to the requests. */
+  @media (max-height: 480px) {
+    .filters {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-items: center;
+    }
+    .head {
+      padding-top: 4px;
+      padding-bottom: 0;
+    }
+    footer {
+      display: none;
+    }
   }
 </style>

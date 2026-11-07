@@ -116,6 +116,14 @@
     padding-left: 29px;
     font-size: 13px;
   }
+  @media (pointer: coarse) {
+    .search :global(svg) {
+      top: 15px;
+    }
+    .search .input {
+      height: 44px;
+    }
+  }
   .grow {
     display: grid;
     gap: 1px;

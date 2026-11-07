@@ -593,6 +593,14 @@
   .lookup-row .btn.icon {
     width: 34px;
   }
+  @media (pointer: coarse) {
+    .lookup-row .btn {
+      height: 44px;
+    }
+    .lookup-row .btn.icon {
+      width: 44px;
+    }
+  }
   .result {
     display: grid;
     gap: 12px;

@@ -31,9 +31,11 @@
       offline: 'Live updates offline, retrying…',
     }[app.live],
   );
+
+  const shownUrl = $derived(app.webhookUrl.replace(/^https?:\/\//, ''));
 </script>
 
-<header class="topbar">
+<header class="topbar" class:reading={app.mobile && !!app.selectedId}>
   <a class="brand" href="#/" title={app.config.app_name} onclick={(e) => { e.preventDefault(); if (app.token) app.select(null); }}>
     <span class="logo"><Webhook size={18} /></span>
     <span class="name">{app.config.app_name}</span>
@@ -44,15 +46,20 @@
       <span class="live-dot {app.live}"></span>
       <UrlMenu />
       {#if app.token.description}<span class="desc">{app.token.description}</span>{/if}
-      <input
-        class="mono"
-        readonly
-        value={app.webhookUrl}
-        aria-label="Your webhook URL"
-        onfocus={(e) => e.currentTarget.select()}
-        onclick={(e) => e.currentTarget.select()}
-      />
-      <CopyButton text={app.webhookUrl} class="btn primary xs" label="Copy" title="Copy URL (c)" toast="URL copied to clipboard" />
+      {#if app.touch}
+        <!-- On touch a field only brings up iOS's zoom: the URL is what you tap to copy it. -->
+        <CopyButton text={app.webhookUrl} class="url-value mono" label={shownUrl} title="Copy URL" toast="URL copied to clipboard" />
+      {:else}
+        <input
+          class="mono"
+          readonly
+          value={app.webhookUrl}
+          aria-label="Your webhook URL"
+          onfocus={(e) => e.currentTarget.select()}
+          onclick={(e) => e.currentTarget.select()}
+        />
+        <CopyButton text={app.webhookUrl} class="btn primary xs url-copy" label="Copy" title="Copy URL (c)" toast="URL copied to clipboard" />
+      {/if}
     </div>
   {/if}
 
@@ -157,6 +164,37 @@
     font-size: 12.5px;
     text-overflow: ellipsis;
   }
+  .url :global(.url-value) {
+    display: flex;
+    flex: 1;
+    flex-direction: row-reverse;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+  }
+  .url :global(.url-value span) {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .url :global(.url-value svg) {
+    flex: none;
+    box-sizing: content-box;
+    width: 16px;
+    height: 16px;
+    padding: 9px 12px;
+    border-radius: 7px;
+    background: var(--accent);
+    color: var(--accent-contrast);
+  }
   .tools {
     display: flex;
     flex: none;
@@ -207,16 +245,81 @@
       margin-left: 2px;
     }
   }
+  @media (pointer: coarse) {
+    .tools {
+      gap: 4px;
+    }
+    .tools :global(.btn.sm) {
+      width: 40px;
+      height: 40px;
+    }
+    .tools :global(.btn.sm svg) {
+      width: 18px;
+      height: 18px;
+    }
+    .tools .gh {
+      width: auto;
+    }
+    .url {
+      height: 44px;
+      padding-right: 4px;
+    }
+    .url :global(.btn.url-menu) {
+      height: 34px;
+      padding: 0 8px;
+    }
+    .url :global(.btn.url-menu svg) {
+      width: 14px;
+      height: 14px;
+    }
+  }
+  /* Phones: the URL, which all of this is about, gets a row of its own. */
   @media (max-width: 640px) {
     .desk {
       display: none;
     }
+    .topbar {
+      flex-wrap: wrap;
+      gap: 4px 8px;
+      height: auto;
+      padding: 4px 8px 8px 12px;
+    }
+    .name {
+      display: inline;
+    }
+    .url {
+      order: 1;
+      flex: 1 0 100%;
+      max-width: none;
+    }
     .url input {
       font-size: 12px;
-      direction: rtl; /* keep the token, not the host, visible when truncated */
-      text-align: left;
     }
-    .url :global(.btn span) {
+    /* Reading one request: its own bar needs the height more. */
+    .reading {
+      padding-bottom: 4px;
+    }
+    .reading .url {
+      display: none;
+    }
+    .url :global(.url-copy span) {
+      display: none;
+    }
+    .tools :global(.btn.new) {
+      width: auto;
+      height: 36px;
+      padding: 0 12px;
+    }
+    .tools .new .label {
+      display: inline;
+    }
+  }
+  @media (max-width: 350px) {
+    .tools :global(.btn.new) {
+      width: 40px;
+      padding: 0;
+    }
+    .tools .new .label {
       display: none;
     }
   }

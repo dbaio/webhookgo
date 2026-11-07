@@ -76,6 +76,11 @@ body {
   height: 100%;
 }
 
+html {
+  -webkit-text-size-adjust: 100%; /* iOS would enlarge the text in landscape */
+  text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -89,6 +94,7 @@ body {
 
 #app {
   height: 100dvh;
+  padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
 }
 
 button,
@@ -536,6 +542,43 @@ kbd,
 }
 
 /* ---------------------------------------------------------------------------
+   Touch
+   ------------------------------------------------------------------------- */
+@media (pointer: coarse) {
+  /* iOS zooms the page in when a field under 16px takes focus, and leaves it
+     zoomed. !important: components size their own fields. */
+  input:not([type='checkbox'], [type='radio']),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+  .input {
+    height: 44px;
+  }
+  .btn {
+    height: 40px;
+  }
+  .btn.sm {
+    height: 36px;
+  }
+  .btn.xs {
+    height: 32px;
+  }
+  .btn.icon {
+    width: 40px;
+  }
+  .btn.icon.sm {
+    width: 36px;
+  }
+  .btn.icon.xs {
+    width: 32px;
+  }
+  .seg button {
+    height: 32px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
    Code
    ------------------------------------------------------------------------- */
 .code {
@@ -626,18 +669,29 @@ dialog.modal::backdrop {
 
 .menu {
   position: fixed;
-  inset: auto;
+  inset: var(--menu-top, auto) var(--menu-right, auto) auto var(--menu-left, auto);
+  width: var(--menu-w, auto);
   margin: 0;
   min-width: 220px;
   max-width: min(360px, calc(100vw - 16px));
-  max-height: calc(100dvh - 80px);
-  padding: 5px;
-  overflow: auto;
+  max-height: var(--menu-max-h, calc(100dvh - 80px));
+  padding: 0;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-elev);
   color: var(--text);
   box-shadow: var(--shadow-lg);
+}
+.menu:popover-open {
+  display: flex;
+  flex-direction: column;
+}
+.menu-panel {
+  flex: 0 1 auto;
+  min-height: 0;
+  padding: 5px;
+  overflow: auto;
 }
 .menu-label {
   padding: 8px 10px 4px;
@@ -682,6 +736,11 @@ dialog.modal::backdrop {
   margin: 5px -5px;
   background: var(--border);
 }
+@media (pointer: coarse) {
+  .menu-item {
+    min-height: 44px;
+  }
+}
 
 @media (max-width: 640px) {
   dialog.modal,
@@ -696,6 +755,40 @@ dialog.modal::backdrop {
   }
   @starting-style {
     dialog.modal[open] {
+      transform: translateY(40px);
+    }
+  }
+
+  /* Menus are sheets here: in reach of a thumb, whatever opened them. */
+  .menu {
+    inset: 0;
+    justify-content: flex-end;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    background: var(--backdrop);
+    box-shadow: none;
+    cursor: pointer; /* iOS only sends clicks to what looks clickable */
+  }
+  .menu-panel {
+    max-height: 85dvh;
+    padding: 8px max(8px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    border-top: 1px solid var(--border);
+    border-radius: 18px 18px 0 0;
+    background: var(--bg-elev);
+    cursor: auto;
+    overscroll-behavior: contain;
+    transition: transform 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+  }
+  .menu-sep {
+    margin-inline: -8px;
+  }
+  @starting-style {
+    .menu:popover-open .menu-panel {
       transform: translateY(40px);
     }
   }

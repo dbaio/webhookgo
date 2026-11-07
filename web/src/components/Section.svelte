@@ -64,6 +64,12 @@
   .toggle:hover {
     background: var(--bg-hover);
   }
+  @media (pointer: coarse) {
+    .toggle {
+      flex: 1;
+      min-height: 36px;
+    }
+  }
   .toggle :global(svg) {
     color: var(--text-3);
     transform: rotate(90deg);
