@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"testing"
 	"time"
 )
@@ -99,5 +100,34 @@ func TestInvalid(t *testing.T) {
 				t.Fatalf("%s=%q must be rejected", key, value)
 			}
 		})
+	}
+}
+
+func TestGoogle(t *testing.T) {
+	c, err := Load()
+	if err != nil || c.GoogleClientID != "" || c.GoogleDomains != nil {
+		t.Fatalf("off by default: %+v, %v", c, err)
+	}
+	t.Setenv("GOOGLE_CLIENT_ID", "id.apps.googleusercontent.com")
+	if _, err := Load(); err == nil {
+		t.Fatal("a client ID without its secret must be refused")
+	}
+	t.Setenv("GOOGLE_CLIENT_SECRET", "secret")
+	t.Setenv("GOOGLE_ALLOWED_DOMAINS", " Example.com, @example.org example.com ")
+	c, err = Load()
+	if err != nil || c.GoogleClientSecret != "secret" || !slices.Equal(c.GoogleDomains, []string{"example.com", "example.org"}) {
+		t.Fatalf("parsed: %q, %v", c.GoogleDomains, err)
+	}
+	for _, bad := range []string{"someone@example.com", "localhost", ".example.com", "example.com.", "https://example.com", "*.example.com", "bücher.de", "-x.com"} {
+		t.Setenv("GOOGLE_ALLOWED_DOMAINS", bad)
+		if _, err := Load(); err == nil {
+			t.Errorf("GOOGLE_ALLOWED_DOMAINS=%s must be refused", bad)
+		}
+	}
+	t.Setenv("GOOGLE_ALLOWED_DOMAINS", "example.com")
+	t.Setenv("GOOGLE_CLIENT_ID", "")
+	t.Setenv("GOOGLE_CLIENT_SECRET", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("domains without a client must be refused")
 	}
 }

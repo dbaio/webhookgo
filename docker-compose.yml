@@ -46,6 +46,9 @@ services:
       LOGIN_RATE_LIMIT: ${LOGIN_RATE_LIMIT:-10}
       ANONYMOUS_URLS: ${ANONYMOUS_URLS:-on}
       ACCOUNT_MAX_URLS: ${ACCOUNT_MAX_URLS:-100}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_ALLOWED_DOMAINS: ${GOOGLE_ALLOWED_DOMAINS:-}
     depends_on:
       redis:
         condition: service_healthy

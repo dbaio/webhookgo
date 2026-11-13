@@ -15,6 +15,7 @@ type User struct {
 	Role         string     `json:"role"`
 	CreatedAt    time.Time  `json:"created_at"`
 	LastLoginAt  *time.Time `json:"last_login_at"`
+	HasPassword  bool       `json:"has_password"` // false for those who only sign in with Google
 	DisabledAt   *time.Time `json:"-"`
 	PasswordHash string     `json:"-"`
 }

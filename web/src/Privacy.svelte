@@ -91,6 +91,12 @@
         <h2>Accounts</h2>
         <ul>
           <li>Your email address, your name, and your password as an argon2id hash: the password itself is never stored.</li>
+          {#if c.google}
+            <li>
+              If you sign in with Google, this server asks Google for your email address only, and keeps nothing else from it: the address is
+              what ties your Google account to your account here. Google, in turn, knows that you signed in here.
+            </li>
+          {/if}
           <li>
             For each session, the IP address and browser it was opened from, until you sign out or it expires. The session cookie only
             identifies the session, and it is removed from the requests your URLs capture.
@@ -110,7 +116,8 @@
       <h2>In your browser</h2>
       <p>
         The app keeps the URLs you opened and your preferences in your browser's local storage{c.accounts
-          ? ', and, for an hour, which URLs each tab created, so that signing in from that tab saves them to your account. While you are signed in, there is also a session cookie'
+          ? ', and, for an hour, which URLs each tab created, so that signing in from that tab saves them to your account. While you are signed in, there is also a session cookie' +
+            (c.google ? ', and signing in with Google sets one for ten minutes, to carry the sign-in there and back' : '')
           : ''}. There are no analytics, ads or third-party scripts: the app loads only from this server.
       </p>
     </section>

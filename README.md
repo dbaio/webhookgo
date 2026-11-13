@@ -90,7 +90,7 @@ every `docker compose up -d`. To stay on a release, use a version tag such as
 - **Wait for a webhook** from scripts and end-to-end tests: one API call returns as soon as a matching request arrives.
 - **Responsive UI** with light/dark themes, keyboard shortcuts (`?`), desktop notifications, unread markers, and a menu of your URLs at the start of the URL bar (`h`).
 - **Abuse handling**: an `/abuse` page where anyone can look up and delete reported URLs, with records kept for investigations.
-- **Accounts** (optional): sign in with an email and password, invite people with one-time links, no SMTP needed. Off by default; see [Accounts](#accounts).
+- **Accounts** (optional): sign in with an email and password or with Google, invite people with one-time links, no SMTP needed. Off by default; see [Accounts](#accounts).
 - **Safe defaults**: per-IP rate limits, body and per-URL storage caps, custom responses sandboxed with CSP, strict CSP on the app, distroless non-root read-only container (~12 MB image).
 
 ## Configuration
@@ -121,6 +121,8 @@ overrides in a `.env` file next to `docker-compose.yml` (see [`.env.example`](.e
 | `LOGIN_RATE_LIMIT` | `10` | Login attempts per minute per client IP (`0` = unlimited); three times that per account and client network (/24, or /56 for IPv6), so nobody can lock you out of your account from elsewhere. |
 | `ANONYMOUS_URLS` | `on` | With accounts on, `off` lets only signed-in people create URLs. See [Private URLs](#private-urls). |
 | `ACCOUNT_MAX_URLS` | `100` | Private URLs each account may own (`0` = unlimited). |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | none | With accounts on, adds **Continue with Google** to the sign-in page. See [Sign in with Google](#sign-in-with-google). |
+| `GOOGLE_ALLOWED_DOMAINS` | any | Email domains whose people may create an account by signing in with Google, e.g. `example.com,example.org` (Google Workspace domains, or `gmail.com`). |
 | `TRUST_PROXY` | `false` | Honour `X-Forwarded-*` from your reverse proxies: `true` for one, or how many. The client IP is read from the right of `X-Forwarded-For`, so it can't be spoofed. Behind Cloudflare's proxy, see [Behind Cloudflare](#behind-cloudflares-proxy). |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection (`rediss://` for TLS). |
 | `LISTEN_ADDR` | `:8080` | Address the server listens on. |
@@ -283,9 +285,9 @@ A Cloudflare Tunnel needs none of this: there the app reads the client from
 
 Off by default: a plain `docker compose up -d` has no sign-in and nothing
 changes. Switched on, people sign in with an email and a password, and the
-app keeps users and sessions in Postgres. There is no open sign-up and no
-SMTP to configure: people join through one-time links that an admin hands
-them.
+app keeps users and sessions in Postgres. There is no SMTP to configure:
+people join through one-time links that an admin hands them or, with
+[Sign in with Google](#sign-in-with-google) on, with their Google account.
 
 ### Enabling it
 
@@ -342,6 +344,71 @@ commands work with an external Postgres, as long as the environment has
 Signed in, **Account** in the top-right menu lets you change your name and
 password, and sign out of your other devices. Changing the password ends
 every other session.
+
+### Sign in with Google
+
+Optional, and still no SMTP: Google vouches for the email address. With it
+on, the sign-in page offers **Continue with Google**, and the app asks
+Google for the email address only (scopes `openid` and `email`). That
+address is what ties the Google account to an account here, so it must be
+one Google answers for: a Gmail address, or one of a Google Workspace
+account. A personal Google account made with any other address only shows
+that someone once read a code sent there, so it is turned away.
+
+1. In the [Google Cloud console](https://console.cloud.google.com/apis/credentials),
+   create an **OAuth client ID** of type **Web application**. The first time,
+   it has you set up the consent screen: a name and a support email are
+   enough. Make its audience **External** and publish it (an app still in
+   testing lets in only the test users it lists); with only `openid` and
+   `email`, Google needs no review.
+2. Under **Authorized redirect URIs**, add your `PUBLIC_URL` followed by
+   `/api/auth/google/callback`. It needs a stable address: a Quick Tunnel's
+   random one won't do (`http://localhost:8080` will, for a try).
+3. Put the client's ID and secret in `.env`, then `docker compose up -d`:
+
+```sh
+# .env
+PUBLIC_URL=https://hooks.example.com
+GOOGLE_CLIENT_ID=1234567890-abc.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-...
+#GOOGLE_ALLOWED_DOMAINS=example.com   # optional: see below
+```
+
+The start-up log says it is on, with the redirect URI to register.
+
+Who gets in, with a Gmail or Workspace address:
+
+- **An account with that email** signs in to it, with its role, its
+  password and its URLs. A disabled one stays out.
+- **An invited address** joins with the invitation's role, and the
+  invitation is used up.
+- **Anyone else** gets a new account with the user role, no name and no
+  password. With `GOOGLE_ALLOWED_DOMAINS` set, only addresses in those
+  domains do (exactly: `example.com` doesn't let in `eng.example.com`), and
+  everyone else is told to ask an admin for an invitation. A listed domain
+  other than `gmail.com` thus lets in its Workspace accounts only.
+
+So the domain list decides who may join, not who may sign in: someone an
+admin invited from another domain signs in with Google like anyone else.
+Each new account goes into the admin log (**Joined with Google**). A new
+account is never an admin unless an admin invited it as one, and the first
+admin still comes from the [setup link](#the-first-admin): if you signed in
+with Google before using it, give the setup page the same address and that
+account becomes the admin. Remember that an existing account, admins
+included, is open to whoever holds its Gmail or Workspace address.
+
+Without `GOOGLE_ALLOWED_DOMAINS`, anyone with a Gmail or Workspace address
+can make an account, with up to `ACCOUNT_MAX_URLS` private URLs that don't
+expire, even with `ANONYMOUS_URLS=off`. Set the list for an instance that is
+only for your people; the start-up log says who may join.
+
+An account made through Google has no password, so it signs in with Google
+only; an admin's password reset link gives it one. Behind a reverse proxy,
+set `PUBLIC_URL` (or `TRUST_PROXY`) so that the app sends Google the
+`https://` redirect URI you registered: Google accepts `http://` ones only
+for `localhost`. A sign-in started on another address than `PUBLIC_URL`'s
+moves there first. For an instance only your Google Workspace uses, an
+**Internal** audience also keeps every other Google account out, at Google.
 
 ### Admin panel
 
@@ -452,18 +519,20 @@ leaked into a repository.
 
 ### What is stored
 
-In Postgres: each user's email, name, role, password (as an argon2id hash),
-when it was created and last signed in; each session's hash, IP address,
-user agent and times, kept until it expires after `SESSION_TTL` without use;
-the hashes of unused links; each API key's name, first characters, hash and
-when it was last used; and the settings of each private URL, with its
-owner. Secrets themselves are never stored.
+In Postgres: each user's email, name, role, password (as an argon2id hash;
+none for an account made through Google), when it was created and last
+signed in; each session's hash, IP address, user agent and times, kept
+until it expires after `SESSION_TTL` without use; the hashes of unused
+links; each API key's name, first characters, hash and when it was last
+used; and the settings of each private URL, with its owner. Secrets themselves are never stored.
 Captured requests stay in Redis, as before, and the session cookie is
 stripped from every captured request before it is recorded, since the UI
 itself can call capture URLs. The cookie is `HttpOnly`, `SameSite=Strict`,
 and `Secure` with the `__Host-` prefix when the app is served over HTTPS
 (`PUBLIC_URL` starts with `https://`, or `TRUST_PROXY` is set and the proxy
-says so).
+says so). Signing in with Google also sets a cookie for ten minutes, with
+that sign-in's state: the same, but `SameSite=Lax`, as it has to come back
+from Google; it is stripped from captured requests too.
 
 ### Backup
 
@@ -510,6 +579,8 @@ shows this at `/privacy` (in the menu), written from its own settings.
 - **Admins** can list and open every URL to look for abuse. Opening one that
   is not theirs goes into the admin log, which cannot be edited and which
   every admin sees, so keep the admins few.
+- **Sign in with Google**, when on, asks Google for the email address only,
+  and keeps nothing else from it.
 - **Accounts** keep what [What is stored](#what-is-stored) lists. Expired
   sessions, and links nobody used in time, are deleted every hour. **Abuse
   reports** keep the reporter's IP address, message and contact.
@@ -637,6 +708,7 @@ private URL), with or without accounts.
 | `GET` | `/api/config` | Instance settings for the UI, including `accounts`. |
 | `GET` | `/api/me` | The signed-in user, or `{"user": null}`. |
 | `POST` | `/api/login`, `/api/logout` | Sign in with `{"email", "password"}` (sets the session cookie) and out. [Accounts](#accounts) only. |
+| `GET` | `/api/auth/google` | Sign in with Google: a browser redirect there and back to `/api/auth/google/callback` (`next` = a URL's ID or `/admin`). Only with [Sign in with Google](#sign-in-with-google) on. |
 | `POST` | `/api/links/inspect`, `/api/links/redeem` | Look at and use a one-time link: `{"token"}`, plus `email`, `name` and `password` as the link's kind needs. Accounts only. |
 | `PATCH` / `POST` | `/api/account`, `/api/account/password`, `/api/account/logout-others` | Rename (`{"name"}`), change the password (`{"current_password", "new_password"}`), end the other sessions. Accounts only. |
 | `GET` / `POST` | `/api/keys` | List the signed-in user's [API keys](#api-keys), or make one: `{"name"}`; the answer carries the `key` this once. Session only. |

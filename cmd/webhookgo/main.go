@@ -86,6 +86,19 @@ func run() error {
 			return err
 		}
 		go keepAnonymousIndex(ctx, st)
+		if cfg.GoogleClientID != "" {
+			join := "any Gmail or Workspace address"
+			if len(cfg.GoogleDomains) > 0 {
+				join = strings.Join(cfg.GoogleDomains, ", ")
+			}
+			base := cfg.PublicURL
+			if base == "" {
+				base = "<the app's address; set PUBLIC_URL>"
+			}
+			slog.Info("sign-in with Google is on", "join", join, "redirect_uri", base+"/api/auth/google/callback")
+		}
+	} else if cfg.GoogleClientID != "" {
+		slog.Warn("GOOGLE_CLIENT_ID is set but ACCOUNTS is off: sign-in with Google stays off")
 	}
 
 	srv, err := server.New(cfg, st, acc, h, web.FS(), version)

@@ -12,6 +12,7 @@
   const PER_PAGE = 50;
   const LABELS: Record<string, string> = {
     'user.invite': 'Invite a user',
+    'user.join': 'Joined with Google',
     'user.role': 'Change a role',
     'user.disable': 'Disable a user',
     'user.enable': 'Enable a user',

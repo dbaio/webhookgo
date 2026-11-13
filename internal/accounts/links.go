@@ -105,7 +105,17 @@ func (s *Store) Redeem(ctx context.Context, token string, in Redeem) (*User, str
 			} else if n > 0 {
 				return ErrNotFound
 			}
-			u, err = insertUser(ctx, tx, in.Email, in.Name, in.PasswordHash, RoleAdmin)
+			// Whoever signed in with Google before the setup (likely the one
+			// setting it up) gets that account made the admin, with the name
+			// and password chosen here; its sessions end, as on a reset.
+			u, err = scanUser(tx.QueryRow(ctx, "update users set role = $2, name = $3, password_hash = $4, disabled_at = null where lower(email) = lower($1) returning "+userColumns,
+				in.Email, RoleAdmin, in.Name, in.PasswordHash))
+			switch {
+			case err == nil:
+				_, err = tx.Exec(ctx, "delete from sessions where user_id = $1", u.ID)
+			case errors.Is(err, ErrNotFound):
+				u, err = insertUser(ctx, tx, in.Email, in.Name, in.PasswordHash, RoleAdmin)
+			}
 			if err == nil {
 				err = logEntry(ctx, tx, NewLogEntry{ActorEmail: ActorSetup, Action: ActionSetup, TargetType: TargetUser, TargetID: u.ID, Details: map[string]any{"email": u.Email}, IP: in.IP})
 			}

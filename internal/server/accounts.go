@@ -225,7 +225,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	u, err := s.accounts.UserByEmail(r.Context(), email)
-	if errors.Is(err, accounts.ErrNotFound) {
+	if errors.Is(err, accounts.ErrNotFound) || err == nil && !u.HasPassword {
 		auth.VerifyDummy(in.Password) // same cost as a real check
 		writeError(w, http.StatusUnauthorized, errBadLogin)
 		return
@@ -387,6 +387,10 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 		New     string `json:"new_password"`
 	}
 	if !readJSON(w, r, &in) {
+		return
+	}
+	if !sess.user.HasPassword {
+		writeError(w, http.StatusConflict, "This account has no password: it signs in with Google")
 		return
 	}
 	if err := auth.CheckPassword(in.New); err != nil {

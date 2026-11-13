@@ -22,7 +22,7 @@ func scanUser(row pgx.Row) (*User, error) {
 	if err != nil {
 		return nil, err
 	}
-	u.CreatedAt = u.CreatedAt.UTC()
+	u.CreatedAt, u.HasPassword = u.CreatedAt.UTC(), u.PasswordHash != ""
 	if u.LastLoginAt != nil {
 		t := u.LastLoginAt.UTC()
 		u.LastLoginAt = &t

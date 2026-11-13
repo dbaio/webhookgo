@@ -106,6 +106,7 @@ class Store {
     abuse_contact: '',
     accounts: false,
     anonymous_urls: true,
+    google: false,
   });
   prefs = $state<Prefs>({ ...defaultPrefs, ...read<Partial<Prefs>>('wh:prefs', {}) });
   history = $state<HistoryEntry[]>(read<HistoryEntry[]>('wh:history', []));

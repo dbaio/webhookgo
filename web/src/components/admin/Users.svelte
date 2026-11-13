@@ -219,7 +219,9 @@
                   <span class="avatar" aria-hidden="true">{initials(u)}</span>
                   <span class="names">
                     <span class="email">{u.email}{#if self}<span class="chip you">You</span>{/if}</span>
-                    {#if u.name}<small>{u.name}</small>{/if}
+                    {#if u.name || u.has_password === false}
+                      <small>{u.name}{#if u.name && u.has_password === false} · {/if}{#if u.has_password === false}Google sign-in only{/if}</small>
+                    {/if}
                   </span>
                 </div>
               </td>

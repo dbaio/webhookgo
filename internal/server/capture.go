@@ -215,8 +215,9 @@ func (s *Server) newRequest(r *http.Request, tokenID, rest, ip string, check *si
 	return req, body
 }
 
-// stripSessionCookies removes the app's session cookie from every Cookie
-// header, keeping the other cookies and dropping headers left empty.
+// stripSessionCookies removes the app's session cookie, and the one of a
+// sign-in through Google, from every Cookie header, keeping the other
+// cookies and dropping headers left empty.
 func stripSessionCookies(h http.Header) {
 	lines := h.Values("Cookie")
 	if len(lines) == 0 {
@@ -228,7 +229,7 @@ func stripSessionCookies(h http.Header) {
 		for part := range strings.SplitSeq(line, ";") {
 			part = strings.TrimSpace(part)
 			name, _, _ := strings.Cut(part, "=")
-			if part == "" || name == auth.SessionCookie || name == auth.HostSessionCookie {
+			if part == "" || name == auth.SessionCookie || name == auth.HostSessionCookie || name == googleCookie || name == hostGoogleCookie {
 				continue
 			}
 			parts = append(parts, part)

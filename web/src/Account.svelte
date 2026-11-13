@@ -11,6 +11,7 @@
   import AccountShell from './components/AccountShell.svelte';
   import ApiKeys from './components/ApiKeys.svelte';
   import FormError from './components/FormError.svelte';
+  import GoogleMark from './components/GoogleMark.svelte';
   import MyUrls from './components/MyUrls.svelte';
   import Notice from './components/Notice.svelte';
 
@@ -132,45 +133,55 @@
 
       <section class="card" aria-labelledby="account-password">
         <h2 id="account-password">Password</h2>
-        <form
-          class="form"
-          novalidate
-          aria-busy={changing}
-          onsubmit={(e) => {
-            e.preventDefault();
-            changePassword();
-          }}
-        >
-          <!-- Lets password managers file the new password under the right account. -->
-          <input type="email" autocomplete="username" value={u.email} readonly hidden />
-          <div class="field">
-            <label for="account-current">Current password</label>
-            <input id="account-current" class="input" type="password" autocomplete="current-password" required bind:value={current} />
-          </div>
-          <div class="field">
-            <label for="account-new">New password</label>
-            <input
-              id="account-new"
-              class="input"
-              type="password"
-              autocomplete="new-password"
-              aria-describedby="account-new-hint"
-              required
-              bind:value={next}
-            />
-            <span id="account-new-hint" class="hint">At least {PASSWORD_MIN} characters. Your other devices will be signed out.</span>
-          </div>
-          <div class="field">
-            <label for="account-confirm">Confirm new password</label>
-            <input id="account-confirm" class="input" type="password" autocomplete="new-password" required bind:value={confirm} />
-          </div>
-          <FormError message={passwordError} />
-          <div class="actions">
-            <button type="submit" class="btn primary sm">
-              {#if changing}<LoaderCircle class="spin" />{:else}<KeyRound />{/if} Change password
-            </button>
-          </div>
-        </form>
+        {#if u.has_password === false}
+          <p class="google">
+            <GoogleMark size={18} />
+            <span>
+              You sign in with Google, as <strong>{u.email}</strong>. This account has no password.
+              <small>Need one? An admin can give you a link to set it.</small>
+            </span>
+          </p>
+        {:else}
+          <form
+            class="form"
+            novalidate
+            aria-busy={changing}
+            onsubmit={(e) => {
+              e.preventDefault();
+              changePassword();
+            }}
+          >
+            <!-- Lets password managers file the new password under the right account. -->
+            <input type="email" autocomplete="username" value={u.email} readonly hidden />
+            <div class="field">
+              <label for="account-current">Current password</label>
+              <input id="account-current" class="input" type="password" autocomplete="current-password" required bind:value={current} />
+            </div>
+            <div class="field">
+              <label for="account-new">New password</label>
+              <input
+                id="account-new"
+                class="input"
+                type="password"
+                autocomplete="new-password"
+                aria-describedby="account-new-hint"
+                required
+                bind:value={next}
+              />
+              <span id="account-new-hint" class="hint">At least {PASSWORD_MIN} characters. Your other devices will be signed out.</span>
+            </div>
+            <div class="field">
+              <label for="account-confirm">Confirm new password</label>
+              <input id="account-confirm" class="input" type="password" autocomplete="new-password" required bind:value={confirm} />
+            </div>
+            <FormError message={passwordError} />
+            <div class="actions">
+              <button type="submit" class="btn primary sm">
+                {#if changing}<LoaderCircle class="spin" />{:else}<KeyRound />{/if} Change password
+              </button>
+            </div>
+          </form>
+        {/if}
       </section>
 
       <section class="card" aria-labelledby="account-sessions">
@@ -293,6 +304,20 @@
     display: block;
     color: var(--text-3);
     font-size: 12px;
+  }
+  .google {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    color: var(--text-2);
+    overflow-wrap: anywhere;
+  }
+  .google :global(svg) {
+    flex: none;
+    margin-top: 1px;
+  }
+  .google small {
+    margin-top: 4px;
   }
   @media (max-width: 480px) {
     section {

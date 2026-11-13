@@ -26,6 +26,7 @@ type Server struct {
 	cfg      config.Config
 	store    *store.Store
 	accounts *accounts.Store // nil when ACCOUNTS is off
+	google   *googleOAuth    // nil unless accounts are on and GOOGLE_CLIENT_ID is set
 	tokens   *tokens         // every read and write of a URL goes through it
 	hub      *hub.Hub
 	ui       *staticFiles
@@ -58,6 +59,9 @@ func New(cfg config.Config, st *store.Store, acc *accounts.Store, h *hub.Hub, ui
 			files.pages[p] = true
 		}
 		s.streamRecheck = streamRecheckEvery
+		if cfg.GoogleClientID != "" {
+			s.google = newGoogle(cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleDomains)
+		}
 	}
 	return s, nil
 }
@@ -90,6 +94,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/me", s.me)
 	mux.HandleFunc("POST /api/login", s.withAccounts(s.login))
 	mux.HandleFunc("POST /api/logout", s.withAccounts(s.logout))
+	mux.HandleFunc("GET /api/auth/google", s.withGoogle(s.googleStart))
+	mux.HandleFunc("GET "+googleCallbackPath, s.withGoogle(s.googleCallback))
 	mux.HandleFunc("POST /api/links/inspect", s.withAccounts(s.inspectLink))
 	mux.HandleFunc("POST /api/links/redeem", s.withAccounts(s.redeemLink))
 	mux.HandleFunc("PATCH /api/account", s.withAccounts(s.updateAccount))
@@ -261,6 +267,7 @@ func (s *Server) appConfig(w http.ResponseWriter, r *http.Request) {
 		"abuse_contact":  s.cfg.AbuseContact,
 		"accounts":       s.accounts != nil,
 		"anonymous_urls": s.accounts == nil || s.cfg.AnonymousURLs,
+		"google":         s.google != nil,
 	})
 }
 

@@ -13,6 +13,8 @@ export interface AppConfig {
   accounts: boolean;
   /** Anyone may create URLs without signing in. Always true with accounts off. */
   anonymous_urls: boolean;
+  /** Sign-in with Google is on (GOOGLE_CLIENT_ID). Missing on older servers. */
+  google?: boolean;
 }
 
 export type Role = 'admin' | 'user';
@@ -24,6 +26,8 @@ export interface User {
   role: Role;
   created_at: string;
   last_login_at: string | null;
+  /** False for an account that only signs in with Google. Missing on older servers. */
+  has_password?: boolean;
 }
 
 /** What a one-time link is for: the first admin, an invitation or a password reset. */

@@ -71,7 +71,7 @@ func (s *Store) SessionUser(ctx context.Context, secret string, ttl time.Duratio
 			return nil, err
 		}
 	}
-	u.CreatedAt = u.CreatedAt.UTC()
+	u.CreatedAt, u.HasPassword = u.CreatedAt.UTC(), u.PasswordHash != ""
 	if u.LastLoginAt != nil {
 		t := u.LastLoginAt.UTC()
 		u.LastLoginAt = &t

@@ -4,9 +4,12 @@ package config
 import (
 	"fmt"
 	"os"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type Config struct {
@@ -36,7 +39,14 @@ type Config struct {
 	LoginLimit    int           // login attempts per minute per IP (0 disables)
 	AnonymousURLs bool          // with accounts on, whether POST /token works without signing in
 	MaxURLs       int           // private URLs one account may own (0 = unlimited)
+
+	GoogleClientID     string   // sign-in with Google is on when set (with accounts on)
+	GoogleClientSecret string   //
+	GoogleDomains      []string // who may join through Google; empty = any address
 }
+
+// domainPattern is a domain name of two labels or more, in ASCII.
+var domainPattern = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 func Load() (Config, error) {
 	c := Config{
@@ -49,6 +59,9 @@ func Load() (Config, error) {
 		LogFormat:    env("LOG_FORMAT", "text"),
 		ShutdownWait: 10 * time.Second,
 		DatabaseURL:  env("DATABASE_URL", ""),
+
+		GoogleClientID:     env("GOOGLE_CLIENT_ID", ""),
+		GoogleClientSecret: env("GOOGLE_CLIENT_SECRET", ""),
 	}
 
 	var err error
@@ -97,6 +110,9 @@ func Load() (Config, error) {
 	if c.ProxyHops, err = envHops("TRUST_PROXY"); err != nil {
 		return c, err
 	}
+	if c.GoogleDomains, err = envDomains("GOOGLE_ALLOWED_DOMAINS"); err != nil {
+		return c, err
+	}
 
 	switch {
 	case c.MaxRequests < 1:
@@ -117,6 +133,10 @@ func Load() (Config, error) {
 		return c, fmt.Errorf("LOGIN_RATE_LIMIT must not be negative")
 	case c.MaxURLs < 0:
 		return c, fmt.Errorf("ACCOUNT_MAX_URLS must not be negative")
+	case (c.GoogleClientID == "") != (c.GoogleClientSecret == ""):
+		return c, fmt.Errorf("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET go together")
+	case len(c.GoogleDomains) > 0 && c.GoogleClientID == "":
+		return c, fmt.Errorf("GOOGLE_ALLOWED_DOMAINS needs GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET")
 	}
 	return c, nil
 }
@@ -173,6 +193,23 @@ func envHops(key string) (int, error) {
 		return 1, nil
 	}
 	return 0, nil
+}
+
+// envDomains reads a list of email domains separated by commas or spaces,
+// lowercased, with an optional leading "@" ("example.com, @example.org").
+// Internationalised domains go in their xn-- form, as Google sends them.
+func envDomains(key string) ([]string, error) {
+	var out []string
+	for _, d := range strings.FieldsFunc(strings.ToLower(env(key, "")), func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
+		d = strings.TrimPrefix(d, "@")
+		if !domainPattern.MatchString(d) {
+			return nil, fmt.Errorf("%s: %q is not a domain (example.com; xn--… for an internationalised one)", key, d)
+		}
+		if !slices.Contains(out, d) {
+			out = append(out, d)
+		}
+	}
+	return out, nil
 }
 
 // envDuration accepts Go durations ("72h") plus a day suffix ("7d").

@@ -157,7 +157,7 @@ func scanAdminUser(row pgx.Row) (*AdminUser, error) {
 	if err != nil {
 		return nil, err
 	}
-	u.CreatedAt = u.CreatedAt.UTC()
+	u.CreatedAt, u.HasPassword = u.CreatedAt.UTC(), u.PasswordHash != ""
 	for _, t := range []**time.Time{&u.LastLoginAt, &u.DisabledAt} {
 		if *t != nil {
 			utc := (*t).UTC()

@@ -121,6 +121,7 @@ export interface LogEntry {
 /** The actions the log filter offers. */
 export const LOG_ACTIONS = [
   'user.invite',
+  'user.join',
   'user.role',
   'user.disable',
   'user.enable',
